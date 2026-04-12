@@ -18,10 +18,13 @@ import (
 	"io"
 	"net"
 	"reflect"
+	"strconv"
 	"strings"
+	"time"
 
 	libio "github.com/fatedier/golib/io"
 
+	"github.com/fatedier/frp/pkg/accesslog"
 	v1 "github.com/fatedier/frp/pkg/config/v1"
 	"github.com/fatedier/frp/pkg/util/limit"
 	netpkg "github.com/fatedier/frp/pkg/util/net"
@@ -65,6 +68,7 @@ func (pxy *HTTPProxy) Run() (remoteAddr string, err error) {
 		AllowIPs:        pxy.cfg.AllowIPs,
 		DenyIPs:         pxy.cfg.DenyIPs,
 		AllowUserAgents: pxy.cfg.AllowUserAgents,
+		AccessLogFn:     pxy.buildAccessLogFn(),
 	}
 
 	locations := pxy.cfg.Locations
@@ -160,6 +164,36 @@ func (pxy *HTTPProxy) updateStatsAfterClosedConn(totalRead, totalWrite int64) {
 	metrics.Server.AddTrafficIn(name, proxyType, totalWrite)
 	metrics.Server.AddTrafficOut(name, proxyType, totalRead)
 }
+
+// buildAccessLogFn returns a closure that writes an HTTP access log entry.
+func (pxy *HTTPProxy) buildAccessLogFn() func(entry vhost.AccessLogEntry) {
+	name := pxy.GetName()
+	proxyType := pxy.GetConfigurer().GetBaseConfig().Type
+	user := pxy.GetUserInfo().User
+	return func(entry vhost.AccessLogEntry) {
+		remoteHost, remotePortStr, _ := net.SplitHostPort(entry.RemoteAddr)
+		remotePort, _ := strconv.Atoi(remotePortStr)
+		accesslog.Default.Write(&accesslog.Record{
+			ProxyName:   name,
+			ProxyType:   proxyType,
+			ProxyUser:   user,
+			RemoteIP:    remoteHost,
+			RemotePort:  remotePort,
+			ConnectedAt: entry.ConnectedAt,
+			Duration:    entry.Duration,
+			TrafficIn:   entry.TrafficIn,
+			TrafficOut:  entry.TrafficOut,
+			UserAgent:   entry.UserAgent,
+			Host:        entry.Host,
+			URL:         entry.URL,
+			StatusCode:  entry.StatusCode,
+			Blocked:     entry.Blocked,
+		})
+	}
+}
+
+// keep time imported for AccessLogEntry usage.
+var _ = time.Now
 
 func (pxy *HTTPProxy) Close() {
 	pxy.BaseProxy.Close()

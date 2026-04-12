@@ -110,6 +110,21 @@ type CreateConnFunc func(remoteAddr string) (net.Conn, error)
 
 type CreateConnByEndpointFunc func(endpoint, remoteAddr string) (net.Conn, error)
 
+// AccessLogEntry carries the information needed to write an HTTP access log record.
+// It is populated by HTTPReverseProxy and passed to AccessLogFn if set.
+type AccessLogEntry struct {
+	RemoteAddr  string
+	UserAgent   string
+	Host        string
+	URL         string
+	StatusCode  int
+	TrafficIn   int64
+	TrafficOut  int64
+	ConnectedAt int64 // unix milliseconds
+	Duration    int64 // milliseconds
+	Blocked     bool
+}
+
 // RouteConfig is the params used to match HTTP requests
 type RouteConfig struct {
 	Domain          string
@@ -128,6 +143,10 @@ type RouteConfig struct {
 	// AllowUserAgents specifies User-Agent glob patterns (wildcard * supported).
 	// A request is allowed if its source IP matches AllowIPs OR its UA matches any pattern here.
 	AllowUserAgents []string
+
+	// AccessLogFn is an optional callback invoked after each HTTP request completes.
+	// It is set by the proxy layer (server/proxy/http.go) and must not be set in pkg/util/vhost.
+	AccessLogFn func(entry AccessLogEntry)
 
 	CreateConnFn           CreateConnFunc
 	ChooseEndpointFn       ChooseEndpointFunc

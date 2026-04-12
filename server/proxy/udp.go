@@ -21,11 +21,13 @@ import (
 	"net"
 	"reflect"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	"github.com/fatedier/golib/errors"
 	libio "github.com/fatedier/golib/io"
 
+	"github.com/fatedier/frp/pkg/accesslog"
 	v1 "github.com/fatedier/frp/pkg/config/v1"
 	"github.com/fatedier/frp/pkg/msg"
 	"github.com/fatedier/frp/pkg/proto/udp"
@@ -61,6 +63,11 @@ type UDPProxy struct {
 	checkCloseCh chan int
 
 	isClosed bool
+
+	// traffic counters for access log (atomic)
+	totalTrafficIn  atomic.Int64
+	totalTrafficOut atomic.Int64
+	startedAt       time.Time
 }
 
 func NewUDPProxy(baseProxy *BaseProxy) Proxy {
@@ -72,6 +79,7 @@ func NewUDPProxy(baseProxy *BaseProxy) Proxy {
 	return &UDPProxy{
 		BaseProxy: baseProxy,
 		cfg:       unwrapped,
+		startedAt: time.Now(),
 	}
 }
 
@@ -138,10 +146,12 @@ func (pxy *UDPProxy) Run() (remoteAddr string, err error) {
 				if errRet := errors.PanicToError(func() {
 					xl.Tracef("get udp message from workConn, len: %d", len(m.Content))
 					pxy.readCh <- m
+					n := int64(len(m.Content))
+					pxy.totalTrafficOut.Add(n)
 					metrics.Server.AddTrafficOut(
 						pxy.GetName(),
 						pxy.GetConfigurer().GetBaseConfig().Type,
-						int64(len(m.Content)),
+						n,
 					)
 				}); errRet != nil {
 					conn.Close()
@@ -168,10 +178,12 @@ func (pxy *UDPProxy) Run() (remoteAddr string, err error) {
 					return
 				}
 				xl.Tracef("send message to udp workConn, len: %d", len(udpMsg.Content))
+				n := int64(len(udpMsg.Content))
+				pxy.totalTrafficIn.Add(n)
 				metrics.Server.AddTrafficIn(
 					pxy.GetName(),
 					pxy.GetConfigurer().GetBaseConfig().Type,
-					int64(len(udpMsg.Content)),
+					n,
 				)
 				continue
 			case <-ctx.Done():
@@ -261,6 +273,23 @@ func (pxy *UDPProxy) Close() {
 		close(pxy.checkCloseCh)
 		close(pxy.readCh)
 		close(pxy.sendCh)
+
+		// Write session-level access log record.
+		cfg := pxy.configurer.GetBaseConfig()
+		remoteAddr := pxy.udpConn.LocalAddr().String()
+		remoteHost, remotePortStr, _ := net.SplitHostPort(remoteAddr)
+		remotePort, _ := strconv.Atoi(remotePortStr)
+		accesslog.Default.Write(&accesslog.Record{
+			ProxyName:   pxy.GetName(),
+			ProxyType:   cfg.Type,
+			ProxyUser:   pxy.GetUserInfo().User,
+			RemoteIP:    remoteHost,
+			RemotePort:  remotePort,
+			ConnectedAt: pxy.startedAt.UnixMilli(),
+			Duration:    time.Since(pxy.startedAt).Milliseconds(),
+			TrafficIn:   pxy.totalTrafficIn.Load(),
+			TrafficOut:  pxy.totalTrafficOut.Load(),
+		})
 	}
 	pxy.rc.UDPPortManager.Release(pxy.realBindPort)
 }

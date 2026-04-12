@@ -96,6 +96,8 @@ type ServerConfig struct {
 	AllowPorts []types.PortsRange `json:"allowPorts,omitempty"`
 
 	HTTPPlugins []HTTPPluginOptions `json:"httpPlugins,omitempty"`
+
+	AccessLog AccessLogConfig `json:"accessLog,omitempty"`
 }
 
 func (c *ServerConfig) Complete() error {
@@ -106,6 +108,7 @@ func (c *ServerConfig) Complete() error {
 	c.Transport.Complete()
 	c.WebServer.Complete()
 	c.SSHTunnelGateway.Complete()
+	c.AccessLog.Complete()
 
 	c.BindAddr = util.EmptyOr(c.BindAddr, "0.0.0.0")
 	c.BindPort = util.EmptyOr(c.BindPort, 7000)
@@ -212,4 +215,21 @@ type SSHTunnelGateway struct {
 
 func (c *SSHTunnelGateway) Complete() {
 	c.AutoGenPrivateKeyPath = util.EmptyOr(c.AutoGenPrivateKeyPath, "./.autogen_ssh_key")
+}
+
+// AccessLogConfig holds configuration for the access log feature.
+type AccessLogConfig struct {
+	// StoragePath is the file path for the SQLite database.
+	// If empty, access logging is disabled.
+	StoragePath string `json:"storagePath,omitempty" toml:"storagePath,omitempty"`
+	// ReserveDays specifies how many days of access records to retain.
+	// 0 means keep forever.
+	ReserveDays int `json:"reserveDays,omitempty" toml:"reserveDays,omitempty"`
+	// QueueSize is the size of the async write queue.
+	// Defaults to 10000.
+	QueueSize int `json:"queueSize,omitempty" toml:"queueSize,omitempty"`
+}
+
+func (c *AccessLogConfig) Complete() {
+	c.QueueSize = util.EmptyOr(c.QueueSize, 10000)
 }

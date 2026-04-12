@@ -19,6 +19,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	stdlog "log"
 	"net"
 	"net/http"
@@ -38,6 +39,36 @@ import (
 )
 
 var ErrNoRouteFound = errors.New("no route found")
+
+// statsResponseWriter wraps http.ResponseWriter to capture status code and bytes written.
+type statsResponseWriter struct {
+	http.ResponseWriter
+	statusCode int
+	bytesOut   int64
+}
+
+func (w *statsResponseWriter) WriteHeader(code int) {
+	w.statusCode = code
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w *statsResponseWriter) Write(b []byte) (int, error) {
+	n, err := w.ResponseWriter.Write(b)
+	w.bytesOut += int64(n)
+	return n, err
+}
+
+// countingReader wraps an io.ReadCloser to count bytes read.
+type countingReader struct {
+	io.ReadCloser
+	n int64
+}
+
+func (r *countingReader) Read(p []byte) (int, error) {
+	n, err := r.ReadCloser.Read(p)
+	r.n += int64(n)
+	return n, err
+}
 
 type HTTPReverseProxyOptions struct {
 	ResponseHeaderTimeoutS int64
@@ -266,7 +297,11 @@ func matchUserAgent(ua, pattern string) bool {
 	// Advance past the matched prefix, then locate each subsequent segment
 	// in order within the remaining string.
 	remaining := ua[len(parts[0]):]
-	for _, p := range parts[1:] {
+	for i, p := range parts[1:] {
+		// The last segment must be a suffix of the remaining string (tail anchor).
+		if i == len(parts)-2 {
+			return strings.HasSuffix(remaining, p)
+		}
 		idx := strings.Index(remaining, p)
 		if idx < 0 {
 			return false
@@ -333,6 +368,9 @@ func (rp *HTTPReverseProxy) connectHandler(rw http.ResponseWriter, req *http.Req
 		return
 	}
 
+	rc, _ := req.Context().Value(RouteConfigKey).(*RouteConfig)
+	connectedAt := time.Now()
+
 	remote, err := rp.CreateConnection(req.Context().Value(RouteInfoKey).(*RequestRouteInfo), false)
 	if err != nil {
 		_ = NotFoundResponse().Write(client)
@@ -340,7 +378,21 @@ func (rp *HTTPReverseProxy) connectHandler(rw http.ResponseWriter, req *http.Req
 		return
 	}
 	_ = req.Write(remote)
-	go libio.Join(remote, client)
+	inCount, outCount, _ := libio.Join(remote, client)
+
+	if rc != nil && rc.AccessLogFn != nil {
+		rc.AccessLogFn(AccessLogEntry{
+			RemoteAddr:  req.RemoteAddr,
+			UserAgent:   req.Header.Get("User-Agent"),
+			Host:        req.Host,
+			URL:         req.URL.Path,
+			StatusCode:  http.StatusOK,
+			TrafficIn:   inCount,
+			TrafficOut:  outCount,
+			ConnectedAt: connectedAt.UnixMilli(),
+			Duration:    time.Since(connectedAt).Milliseconds(),
+		})
+	}
 }
 
 func (rp *HTTPReverseProxy) injectRequestInfoToCtx(req *http.Request) *http.Request {
@@ -391,6 +443,17 @@ func (rp *HTTPReverseProxy) ServeHTTP(rw http.ResponseWriter, req *http.Request)
 		ua := req.Header.Get("User-Agent")
 		if !checkHTTPAccess(req.RemoteAddr, ua, rc.AllowIPs, rc.DenyIPs, rc.AllowUserAgents) {
 			log.Debugf("http request from [%s] rejected by access control, UA: %q", req.RemoteAddr, ua)
+			if rc.AccessLogFn != nil {
+				rc.AccessLogFn(AccessLogEntry{
+					RemoteAddr:  req.RemoteAddr,
+					UserAgent:   ua,
+					Host:        req.Host,
+					URL:         req.URL.Path,
+					StatusCode:  http.StatusForbidden,
+					ConnectedAt: time.Now().UnixMilli(),
+					Blocked:     true,
+				})
+			}
 			http.Error(rw, http.StatusText(http.StatusForbidden), http.StatusForbidden)
 			return
 		}
@@ -398,7 +461,35 @@ func (rp *HTTPReverseProxy) ServeHTTP(rw http.ResponseWriter, req *http.Request)
 
 	if req.Method == http.MethodConnect {
 		rp.connectHandler(rw, newreq)
-	} else {
-		rp.proxy.ServeHTTP(rw, newreq)
+		return
+	}
+
+	// Wrap request body and response writer to capture traffic stats.
+	connectedAt := time.Now()
+	var bodyReader *countingReader
+	if req.Body != nil {
+		bodyReader = &countingReader{ReadCloser: req.Body}
+		newreq.Body = bodyReader
+	}
+	srw := &statsResponseWriter{ResponseWriter: rw, statusCode: http.StatusOK}
+
+	rp.proxy.ServeHTTP(srw, newreq)
+
+	if rc != nil && rc.AccessLogFn != nil {
+		var bytesIn int64
+		if bodyReader != nil {
+			bytesIn = bodyReader.n
+		}
+		rc.AccessLogFn(AccessLogEntry{
+			RemoteAddr:  req.RemoteAddr,
+			UserAgent:   req.Header.Get("User-Agent"),
+			Host:        req.Host,
+			URL:         req.URL.Path,
+			StatusCode:  srw.statusCode,
+			TrafficIn:   bytesIn,
+			TrafficOut:  srw.bytesOut,
+			ConnectedAt: connectedAt.UnixMilli(),
+			Duration:    time.Since(connectedAt).Milliseconds(),
+		})
 	}
 }

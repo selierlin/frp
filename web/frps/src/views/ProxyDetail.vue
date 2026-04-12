@@ -256,6 +256,120 @@
             <Traffic :proxy-name="proxyName" />
           </div>
         </div>
+
+        <!-- Access Log Section -->
+        <div class="access-log-card">
+          <div class="access-log-header">
+            <div class="access-log-title">
+              <el-icon><List /></el-icon>
+              <h2>Access Log</h2>
+            </div>
+            <div class="access-log-filters">
+              <el-input
+                v-model="logFilter.remoteIP"
+                placeholder="Filter by IP"
+                clearable
+                size="small"
+                style="width: 160px"
+                @change="fetchAccessLog(1)"
+                @clear="fetchAccessLog(1)"
+              />
+              <el-date-picker
+                v-model="logFilter.timeRange"
+                type="datetimerange"
+                size="small"
+                range-separator="~"
+                start-placeholder="Start"
+                end-placeholder="End"
+                :shortcuts="dateShortcuts"
+                @change="fetchAccessLog(1)"
+              />
+              <el-button size="small" :icon="Refresh" circle @click="fetchAccessLog(logPage)" />
+            </div>
+          </div>
+
+          <div class="access-log-body" v-loading="logLoading">
+            <el-table
+              :data="logRecords"
+              size="small"
+              stripe
+              empty-text="No records"
+              style="width: 100%"
+            >
+              <el-table-column label="Time" width="170">
+                <template #default="{ row }">
+                  {{ formatTime(row.connectedAt) }}
+                </template>
+              </el-table-column>
+              <el-table-column label="Remote IP" width="140">
+                <template #default="{ row }">
+                  <span class="log-ip" @click="filterByIP(row.remoteIP)">{{ row.remoteIP }}</span>
+                  <span class="log-port">:{{ row.remotePort }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column label="Duration" width="100">
+                <template #default="{ row }">
+                  {{ formatDuration(row.duration) }}
+                </template>
+              </el-table-column>
+              <el-table-column label="Traffic ↓/↑" width="160">
+                <template #default="{ row }">
+                  <span class="traffic-in">{{ formatBytes(row.trafficIn) }}</span>
+                  <span class="traffic-sep"> / </span>
+                  <span class="traffic-out">{{ formatBytes(row.trafficOut) }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column label="Status" width="80">
+                <template #default="{ row }">
+                  <el-tag
+                    v-if="row.blocked"
+                    type="danger"
+                    size="small"
+                    effect="plain"
+                  >Blocked</el-tag>
+                  <el-tag
+                    v-else-if="row.statusCode && row.statusCode >= 400"
+                    type="warning"
+                    size="small"
+                    effect="plain"
+                  >{{ row.statusCode }}</el-tag>
+                  <el-tag
+                    v-else-if="row.statusCode"
+                    type="success"
+                    size="small"
+                    effect="plain"
+                  >{{ row.statusCode }}</el-tag>
+                  <span v-else class="log-ok">—</span>
+                </template>
+              </el-table-column>
+              <el-table-column label="Host / URL" min-width="160" show-overflow-tooltip>
+                <template #default="{ row }">
+                  <span v-if="row.host" class="log-host">{{ row.host }}{{ row.url }}</span>
+                  <span v-else class="log-empty">—</span>
+                </template>
+              </el-table-column>
+              <el-table-column label="User-Agent" min-width="160" show-overflow-tooltip>
+                <template #default="{ row }">
+                  <span v-if="row.userAgent" class="log-ua">{{ row.userAgent }}</span>
+                  <span v-else class="log-empty">—</span>
+                </template>
+              </el-table-column>
+            </el-table>
+
+            <div class="access-log-pagination">
+              <el-pagination
+                v-model:current-page="logPage"
+                v-model:page-size="logPageSize"
+                :total="logTotal"
+                :page-sizes="[20, 50, 100]"
+                layout="total, sizes, prev, pager, next"
+                small
+                @current-change="fetchAccessLog"
+                @size-change="fetchAccessLog(1)"
+              />
+            </div>
+          </div>
+        </div>
       </template>
 
       <div v-else-if="!loading" class="not-found">
@@ -288,8 +402,10 @@ import {
   Location,
   CircleCheck,
   CircleClose,
+  List,
+  Refresh,
 } from '@element-plus/icons-vue'
-import { getProxyByName } from '../api/proxy'
+import { getProxyByName, getAccessLog } from '../api/proxy'
 import { getServerInfo } from '../api/server'
 import {
   BaseProxy,
@@ -302,6 +418,7 @@ import {
   SUDPProxy,
 } from '../utils/proxy'
 import Traffic from '../components/Traffic.vue'
+import type { AccessLogRecord } from '../types/proxy'
 
 const route = useRoute()
 const router = useRouter()
@@ -314,6 +431,98 @@ const fromClient = computed(() => {
 })
 const proxy = ref<BaseProxy | null>(null)
 const loading = ref(true)
+
+// ── Access Log ──────────────────────────────────────────────
+const logLoading = ref(false)
+const logRecords = ref<AccessLogRecord[]>([])
+const logTotal = ref(0)
+const logPage = ref(1)
+const logPageSize = ref(20)
+const logFilter = ref<{ remoteIP: string; timeRange: [Date, Date] | null }>({
+  remoteIP: '',
+  timeRange: null,
+})
+
+const dateShortcuts = [
+  {
+    text: 'Last 1h',
+    value: () => {
+      const end = new Date()
+      const start = new Date()
+      start.setHours(start.getHours() - 1)
+      return [start, end]
+    },
+  },
+  {
+    text: 'Last 24h',
+    value: () => {
+      const end = new Date()
+      const start = new Date()
+      start.setDate(start.getDate() - 1)
+      return [start, end]
+    },
+  },
+  {
+    text: 'Last 7d',
+    value: () => {
+      const end = new Date()
+      const start = new Date()
+      start.setDate(start.getDate() - 7)
+      return [start, end]
+    },
+  },
+]
+
+const fetchAccessLog = async (page = logPage.value) => {
+  logLoading.value = true
+  logPage.value = page
+  try {
+    const params: any = {
+      proxyName: proxyName.value,
+      page: logPage.value,
+      pageSize: logPageSize.value,
+    }
+    if (logFilter.value.remoteIP) params.remoteIP = logFilter.value.remoteIP
+    if (logFilter.value.timeRange) {
+      params.startTime = logFilter.value.timeRange[0].getTime()
+      params.endTime = logFilter.value.timeRange[1].getTime()
+    }
+    const res = await getAccessLog(params)
+    logRecords.value = res.records ?? []
+    logTotal.value = res.total ?? 0
+  } catch {
+    // access log may not be enabled, silently skip
+  } finally {
+    logLoading.value = false
+  }
+}
+
+const filterByIP = (ip: string) => {
+  logFilter.value.remoteIP = ip
+  fetchAccessLog(1)
+}
+
+const formatTime = (ms: number): string => {
+  if (!ms) return '—'
+  return new Date(ms).toLocaleString()
+}
+
+const formatDuration = (ms: number): string => {
+  if (ms < 1000) return `${ms}ms`
+  if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`
+  const m = Math.floor(ms / 60000)
+  const s = Math.floor((ms % 60000) / 1000)
+  return `${m}m${s}s`
+}
+
+const formatBytes = (bytes: number): string => {
+  if (!bytes) return '0B'
+  const units = ['B', 'K', 'M', 'G']
+  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1)
+  const v = bytes / Math.pow(1024, i)
+  return (v < 10 ? v.toFixed(1) : Math.round(v)) + units[i]
+}
+// ────────────────────────────────────────────────────────────
 
 const goBack = () => {
   if (window.history.length > 1) {
@@ -452,6 +661,7 @@ const fetchProxy = async () => {
 
 onMounted(() => {
   fetchProxy()
+  fetchAccessLog(1)
 })
 </script>
 
@@ -952,5 +1162,105 @@ html.dark .config-item-icon.route {
     gap: 16px;
   }
 
+}
+
+/* Access Log */
+.access-log-card {
+  background: var(--el-bg-color);
+  border: 1px solid var(--header-border);
+  border-radius: 12px;
+  margin-bottom: 16px;
+}
+
+.access-log-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--header-border);
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.access-log-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-secondary);
+}
+
+.access-log-title h2 {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.access-log-filters {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.access-log-body {
+  padding: 16px 20px;
+}
+
+.access-log-pagination {
+  margin-top: 16px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.log-ip {
+  color: var(--el-color-primary);
+  cursor: pointer;
+  font-family: monospace;
+}
+
+.log-ip:hover {
+  text-decoration: underline;
+}
+
+.log-port {
+  color: var(--text-secondary);
+  font-family: monospace;
+  font-size: 12px;
+}
+
+.log-host {
+  font-family: monospace;
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
+.log-ua {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.log-empty {
+  color: var(--text-muted, var(--text-secondary));
+}
+
+.log-ok {
+  color: var(--text-secondary);
+}
+
+.traffic-in {
+  color: #22c55e;
+  font-size: 12px;
+  font-family: monospace;
+}
+
+.traffic-sep {
+  color: var(--text-secondary);
+}
+
+.traffic-out {
+  color: #3b82f6;
+  font-size: 12px;
+  font-family: monospace;
 }
 </style>

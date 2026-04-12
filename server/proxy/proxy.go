@@ -27,6 +27,7 @@ import (
 	libio "github.com/fatedier/golib/io"
 	"golang.org/x/time/rate"
 
+	"github.com/fatedier/frp/pkg/accesslog"
 	"github.com/fatedier/frp/pkg/config/types"
 	v1 "github.com/fatedier/frp/pkg/config/v1"
 	"github.com/fatedier/frp/pkg/msg"
@@ -263,6 +264,17 @@ func (pxy *BaseProxy) handleUserTCPConnection(userConn net.Conn) {
 	// IP access control
 	if err := pxy.checkIPAccess(userConn.RemoteAddr()); err != nil {
 		xl.Warnf("the user conn [%s] was rejected by ip access control: %v", userConn.RemoteAddr().String(), err)
+		remoteHost, remotePortStr, _ := net.SplitHostPort(userConn.RemoteAddr().String())
+		remotePort, _ := strconv.Atoi(remotePortStr)
+		accesslog.Default.Write(&accesslog.Record{
+			ProxyName:   pxy.GetName(),
+			ProxyType:   cfg.Type,
+			ProxyUser:   pxy.GetUserInfo().User,
+			RemoteIP:    remoteHost,
+			RemotePort:  remotePort,
+			ConnectedAt: time.Now().UnixMilli(),
+			Blocked:     true,
+		})
 		return
 	}
 
@@ -300,11 +312,26 @@ func (pxy *BaseProxy) handleUserTCPConnection(userConn net.Conn) {
 
 	name := pxy.GetName()
 	proxyType := cfg.Type
+	connectedAt := time.Now()
 	metrics.Server.OpenConnection(name, proxyType)
 	inCount, outCount, _ := libio.Join(local, userConn)
 	metrics.Server.CloseConnection(name, proxyType)
 	metrics.Server.AddTrafficIn(name, proxyType, inCount)
 	metrics.Server.AddTrafficOut(name, proxyType, outCount)
+
+	remoteHost, remotePortStr, _ := net.SplitHostPort(userConn.RemoteAddr().String())
+	remotePort, _ := strconv.Atoi(remotePortStr)
+	accesslog.Default.Write(&accesslog.Record{
+		ProxyName:   name,
+		ProxyType:   proxyType,
+		ProxyUser:   pxy.GetUserInfo().User,
+		RemoteIP:    remoteHost,
+		RemotePort:  remotePort,
+		ConnectedAt: connectedAt.UnixMilli(),
+		Duration:    time.Since(connectedAt).Milliseconds(),
+		TrafficIn:   inCount,
+		TrafficOut:  outCount,
+	})
 	xl.Debugf("join connections closed")
 }
 

@@ -31,6 +31,7 @@ import (
 	quic "github.com/quic-go/quic-go"
 	"github.com/samber/lo"
 
+	"github.com/fatedier/frp/pkg/accesslog"
 	"github.com/fatedier/frp/pkg/auth"
 	v1 "github.com/fatedier/frp/pkg/config/v1"
 	modelmetrics "github.com/fatedier/frp/pkg/metrics"
@@ -123,6 +124,9 @@ type Service struct {
 	tlsConfig *tls.Config
 
 	cfg *v1.ServerConfig
+
+	// accessLogManager handles third-party access log persistence (optional).
+	accessLogManager *accesslog.Manager
 
 	// service context
 	ctx context.Context
@@ -349,6 +353,18 @@ func NewService(cfg *v1.ServerConfig) (*Service, error) {
 		return nil, fmt.Errorf("create nat hole controller error, %v", err)
 	}
 	svr.rc.NatHoleController = nc
+
+	// Init access log manager if storage path is configured.
+	if cfg.AccessLog.StoragePath != "" {
+		mgr, err := accesslog.NewManager(cfg.AccessLog.StoragePath, cfg.AccessLog.ReserveDays, cfg.AccessLog.QueueSize)
+		if err != nil {
+			return nil, fmt.Errorf("create access log manager error, %v", err)
+		}
+		svr.accessLogManager = mgr
+		accesslog.Register(mgr)
+		log.Infof("access log enabled, storage: %s, reserveDays: %d", cfg.AccessLog.StoragePath, cfg.AccessLog.ReserveDays)
+	}
+
 	return svr, nil
 }
 
@@ -380,6 +396,10 @@ func (svr *Service) Run(ctx context.Context) {
 
 	if svr.rc.NatHoleController != nil {
 		go svr.rc.NatHoleController.CleanWorker(svr.ctx)
+	}
+
+	if svr.accessLogManager != nil {
+		go svr.accessLogManager.Run(svr.ctx)
 	}
 
 	if svr.sshTunnelGateway != nil {
@@ -423,6 +443,11 @@ func (svr *Service) Close() error {
 	svr.rc.Close()
 	svr.muxer.Close()
 	svr.ctlManager.Close()
+	if svr.accessLogManager != nil {
+		if err := svr.accessLogManager.Close(); err != nil {
+			log.Warnf("close access log manager error: %v", err)
+		}
+	}
 	if svr.cancel != nil {
 		svr.cancel()
 	}

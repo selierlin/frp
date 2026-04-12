@@ -173,3 +173,14 @@ name = "port-manager"
 addr = "127.0.0.1:9001"
 path = "/handler"
 ops = ["NewProxy"]
+
+# 访问日志配置。
+# 将每条第三方连接到代理的记录写入本地 SQLite 数据库。
+# 可通过管理面板 API 查询：GET /api/accesslog
+# 将 storagePath 留空（或省略此段）可禁用访问日志功能。
+# [accessLog]
+# storagePath = "./frps_access.db"
+# reserveDays 指定保留多少天的记录，0 表示永久保留。
+# reserveDays = 30
+# queueSize 为内部异步写入队列的大小，默认 10000。
+# queueSize = 10000

@@ -167,3 +167,14 @@ name = "port-manager"
 addr = "127.0.0.1:9001"
 path = "/handler"
 ops = ["NewProxy"]
+
+# Access log configuration.
+# Record every third-party connection to proxies in a local SQLite database.
+# The access log is queryable via the dashboard API: GET /api/accesslog
+# Leave storagePath empty (or omit this section) to disable access logging.
+# [accessLog]
+# storagePath = "./frps_access.db"
+# reserveDays specifies how many days of records to keep. 0 = keep forever.
+# reserveDays = 30
+# queueSize is the size of the internal async write queue (default 10000).
+# queueSize = 10000
