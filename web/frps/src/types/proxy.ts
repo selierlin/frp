@@ -37,6 +37,7 @@ export interface AccessLogRecord {
   url?: string
   statusCode?: number
   blocked?: boolean
+  event?: string
 }
 
 export interface AccessLogResult {
@@ -47,6 +48,7 @@ export interface AccessLogResult {
 export interface AccessLogQueryParams {
   proxyName?: string
   remoteIP?: string
+  event?: string
   startTime?: number  // unix ms
   endTime?: number    // unix ms
   page?: number

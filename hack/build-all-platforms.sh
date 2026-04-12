@@ -5,10 +5,17 @@ LDFLAGS="-s -w"
 OUTPUT_DIR="bin/release"
 NOWEB_TAG=""
 
-# 检查 web 资源是否存在
+# 检查 web 资源是否存在，不存在则自动构建
 if [ ! -d "web/frps/dist" ] || [ ! -d "web/frpc/dist" ]; then
-    NOWEB_TAG=",noweb"
-    echo "警告: web 资源未构建，使用 noweb 标签"
+    echo "web 资源未构建，正在执行 make web..."
+    make web
+    # 再次检查，如果构建失败则使用 noweb 标签
+    if [ ! -d "web/frps/dist" ] || [ ! -d "web/frpc/dist" ]; then
+        NOWEB_TAG=",noweb"
+        echo "警告: web 资源构建失败，使用 noweb 标签"
+    else
+        echo "web 资源构建成功"
+    fi
 fi
 
 mkdir -p "$OUTPUT_DIR"

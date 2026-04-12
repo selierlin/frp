@@ -39,10 +39,12 @@ CREATE TABLE IF NOT EXISTS access_logs (
 	host         TEXT    NOT NULL DEFAULT '',
 	url          TEXT    NOT NULL DEFAULT '',
 	status_code  INTEGER NOT NULL DEFAULT 0,
-	blocked      INTEGER NOT NULL DEFAULT 0
+	blocked      INTEGER NOT NULL DEFAULT 0,
+	event        TEXT    NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_proxy_time ON access_logs(proxy_name, connected_at DESC);
 CREATE INDEX IF NOT EXISTS idx_ip_time    ON access_logs(remote_ip,  connected_at DESC);
+CREATE INDEX IF NOT EXISTS idx_event      ON access_logs(event, connected_at DESC);
 CREATE INDEX IF NOT EXISTS idx_time       ON access_logs(connected_at);
 `
 
@@ -77,6 +79,34 @@ func newStore(path string) (*store, error) {
 	return &store{db: db}, nil
 }
 
+func (s *store) insert(r *Record) (int64, error) {
+	blocked := 0
+	if r.Blocked {
+		blocked = 1
+	}
+	res, err := s.db.Exec(`INSERT INTO access_logs
+		(proxy_name, proxy_type, proxy_user, remote_ip, remote_port,
+		 connected_at, duration, traffic_in, traffic_out,
+		 user_agent, host, url, status_code, blocked, event)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		r.ProxyName, r.ProxyType, r.ProxyUser, r.RemoteIP, r.RemotePort,
+		r.ConnectedAt, r.Duration, r.TrafficIn, r.TrafficOut,
+		r.UserAgent, r.Host, r.URL, r.StatusCode, blocked, r.Event,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+func (s *store) updateOnClose(id, duration, trafficIn, trafficOut int64) error {
+	_, err := s.db.Exec(
+		`UPDATE access_logs SET duration=?, traffic_in=?, traffic_out=?, event=? WHERE id=?`,
+		duration, trafficIn, trafficOut, EventDisconnected, id,
+	)
+	return err
+}
+
 func (s *store) batchInsert(records []*Record) error {
 	if len(records) == 0 {
 		return nil
@@ -88,8 +118,8 @@ func (s *store) batchInsert(records []*Record) error {
 	stmt, err := tx.Prepare(`INSERT INTO access_logs
 		(proxy_name, proxy_type, proxy_user, remote_ip, remote_port,
 		 connected_at, duration, traffic_in, traffic_out,
-		 user_agent, host, url, status_code, blocked)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+		 user_agent, host, url, status_code, blocked, event)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
 	if err != nil {
 		_ = tx.Rollback()
 		return err
@@ -104,7 +134,7 @@ func (s *store) batchInsert(records []*Record) error {
 		if _, err := stmt.Exec(
 			r.ProxyName, r.ProxyType, r.ProxyUser, r.RemoteIP, r.RemotePort,
 			r.ConnectedAt, r.Duration, r.TrafficIn, r.TrafficOut,
-			r.UserAgent, r.Host, r.URL, r.StatusCode, blocked,
+			r.UserAgent, r.Host, r.URL, r.StatusCode, blocked, r.Event,
 		); err != nil {
 			_ = tx.Rollback()
 			return err
@@ -133,7 +163,7 @@ func (s *store) query(p QueryParams) (*QueryResult, error) {
 
 	offset := (page - 1) * pageSize
 	querySQL := fmt.Sprintf(
-		"SELECT id,proxy_name,proxy_type,proxy_user,remote_ip,remote_port,connected_at,duration,traffic_in,traffic_out,user_agent,host,url,status_code,blocked FROM access_logs%s ORDER BY connected_at DESC LIMIT ? OFFSET ?",
+		"SELECT id,proxy_name,proxy_type,proxy_user,remote_ip,remote_port,connected_at,duration,traffic_in,traffic_out,user_agent,host,url,status_code,blocked,event FROM access_logs%s ORDER BY connected_at DESC LIMIT ? OFFSET ?",
 		where,
 	)
 	args = append(args, pageSize, offset)
@@ -152,7 +182,7 @@ func (s *store) query(p QueryParams) (*QueryResult, error) {
 			&r.ID, &r.ProxyName, &r.ProxyType, &r.ProxyUser,
 			&r.RemoteIP, &r.RemotePort, &r.ConnectedAt, &r.Duration,
 			&r.TrafficIn, &r.TrafficOut, &r.UserAgent, &r.Host, &r.URL,
-			&r.StatusCode, &blocked,
+			&r.StatusCode, &blocked, &r.Event,
 		); err != nil {
 			return nil, err
 		}
@@ -182,6 +212,10 @@ func buildWhere(p QueryParams) (string, []any) {
 	if p.RemoteIP != "" {
 		clauses = append(clauses, "remote_ip = ?")
 		args = append(args, p.RemoteIP)
+	}
+	if p.Event != "" {
+		clauses = append(clauses, "event = ?")
+		args = append(args, p.Event)
 	}
 	if p.StartTime > 0 {
 		clauses = append(clauses, "connected_at >= ?")

@@ -31,6 +31,7 @@ export const getAccessLog = (params: AccessLogQueryParams) => {
   const query = new URLSearchParams()
   if (params.proxyName) query.set('proxyName', params.proxyName)
   if (params.remoteIP) query.set('remoteIP', params.remoteIP)
+  if (params.event) query.set('event', params.event)
   if (params.startTime) query.set('startTime', String(params.startTime))
   if (params.endTime) query.set('endTime', String(params.endTime))
   query.set('page', String(params.page ?? 1))

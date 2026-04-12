@@ -119,6 +119,9 @@ frp also offers a P2P connect mode.
     * [Available Feature Gates](#available-feature-gates)
     * [Enabling Feature Gates](#enabling-feature-gates)
     * [Feature Lifecycle](#feature-lifecycle)
+* [Development](#development)
+    * [Build from Source](#build-from-source)
+    * [Cross-Platform Build](#cross-platform-build)
 * [Related Projects](#related-projects)
 * [Contributing](#contributing)
 * [Donation](#donation)
@@ -1337,6 +1340,45 @@ Features typically go through three stages:
 1. **ALPHA**: Disabled by default, may be unstable
 2. **BETA**: May be enabled by default, more stable but still evolving
 3. **GA (Generally Available)**: Enabled by default, ready for production use
+
+## Development
+
+### Build from Source
+
+```bash
+# Build frps and frpc (web resources included if available)
+make build
+
+# Build web dashboard resources first, then build binaries
+make web && make build
+
+# Build only frps
+make frps
+
+# Build only frpc
+make frpc
+
+# Run tests
+make test
+
+# Run all tests including vet, unit tests, and e2e
+make alltest
+```
+
+### Cross-Platform Build
+
+Use the provided script to build binaries for multiple platforms:
+
+```bash
+./hack/build-all-platforms.sh
+```
+
+This script automatically builds web resources if not present, then compiles frps and frpc for the following platforms:
+- linux/amd64, linux/arm64, linux/arm/7
+- windows/amd64, windows/arm64
+- darwin/amd64, darwin/arm64
+
+Output binaries are placed in `bin/release/` directory.
 
 ## Related Projects
 

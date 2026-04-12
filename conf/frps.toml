@@ -1,1 +1,18 @@
-bindPort = 7000
+bindPort = 7001
+
+# HTTP 代理监听端口
+vhostHTTPPort = 8888
+
+# Dashboard
+webServer.addr = "127.0.0.1"
+webServer.port = 7500
+webServer.user = "admin"
+webServer.password = "admin"
+
+# 认证
+auth.method = "token"
+auth.token = "12345678"
+
+[accessLog]
+storagePath = "./frps_access.db"
+reserveDays = 7

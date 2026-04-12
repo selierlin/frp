@@ -25,6 +25,7 @@
           :value="data.curConns"
           type="connections"
           subtitle="Current connections"
+          @click="showConnDrawer = true"
         />
       </el-col>
       <el-col :xs="24" :sm="12" :lg="6">
@@ -158,6 +159,8 @@
       </div>
     </el-card>
   </div>
+
+  <ConnectionsDrawer v-model="showConnDrawer" />
 </template>
 
 <script setup lang="ts">
@@ -166,7 +169,10 @@ import { ElMessage } from 'element-plus'
 import { formatFileSize } from '../utils/format'
 import { Download, Upload } from '@element-plus/icons-vue'
 import StatCard from '../components/StatCard.vue'
+import ConnectionsDrawer from '../components/ConnectionsDrawer.vue'
 import { getServerInfo } from '../api/server'
+
+const showConnDrawer = ref(false)
 
 const data = ref({
   version: '',

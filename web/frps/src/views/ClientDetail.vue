@@ -118,6 +118,7 @@
                 :key="proxy.name"
                 :proxy="proxy"
                 show-type
+                @show-connections="onShowConnections"
               />
             </div>
             <div v-else-if="clientProxies.length > 0" class="empty-state">
@@ -139,6 +140,8 @@
       </div>
     </div>
   </div>
+
+  <ConnectionsDrawer v-model="showConnDrawer" :proxy-name="selectedProxyName" />
 </template>
 
 <script setup lang="ts">
@@ -161,6 +164,7 @@ import {
 } from '../utils/proxy'
 import { getServerInfo } from '../api/server'
 import ProxyCard from '../components/ProxyCard.vue'
+import ConnectionsDrawer from '../components/ConnectionsDrawer.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -177,6 +181,13 @@ const goBack = () => {
 const proxiesLoading = ref(false)
 const allProxies = ref<BaseProxy[]>([])
 const proxySearch = ref('')
+const showConnDrawer = ref(false)
+const selectedProxyName = ref('')
+
+const onShowConnections = (proxyName: string) => {
+  selectedProxyName.value = proxyName
+  showConnDrawer.value = true
+}
 
 let serverInfo: {
   vhostHTTPPort: number

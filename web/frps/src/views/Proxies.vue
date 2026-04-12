@@ -79,6 +79,7 @@
           v-for="proxy in filteredProxies"
           :key="proxy.name"
           :proxy="proxy"
+          @show-connections="onShowConnections"
         />
       </div>
       <div v-else-if="!loading" class="empty-state">
@@ -95,6 +96,8 @@
       @confirm="handleClearConfirm"
     />
   </div>
+
+  <ConnectionsDrawer v-model="showConnDrawer" :proxy-name="selectedProxyName" />
 </template>
 
 <script setup lang="ts">
@@ -115,6 +118,7 @@ import {
   SUDPProxy,
 } from '../utils/proxy'
 import ProxyCard from '../components/ProxyCard.vue'
+import ConnectionsDrawer from '../components/ConnectionsDrawer.vue'
 import PopoverMenu from '@shared/components/PopoverMenu.vue'
 import PopoverMenuItem from '@shared/components/PopoverMenuItem.vue'
 import {
@@ -144,6 +148,8 @@ const clients = ref<Client[]>([])
 const loading = ref(false)
 const searchText = ref('')
 const showClearDialog = ref(false)
+const showConnDrawer = ref(false)
+const selectedProxyName = ref('')
 const clientIDFilter = ref((route.query.clientID as string) || '')
 const userFilter = ref((route.query.user as string) || '')
 
@@ -298,6 +304,11 @@ const fetchData = async () => {
   } finally {
     loading.value = false
   }
+}
+
+const onShowConnections = (proxyName: string) => {
+  selectedProxyName.value = proxyName
+  showConnDrawer.value = true
 }
 
 const handleClearConfirm = async () => {

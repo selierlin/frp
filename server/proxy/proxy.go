@@ -274,6 +274,7 @@ func (pxy *BaseProxy) handleUserTCPConnection(userConn net.Conn) {
 			RemotePort:  remotePort,
 			ConnectedAt: time.Now().UnixMilli(),
 			Blocked:     true,
+			Event:       accesslog.EventBlocked,
 		})
 		return
 	}
@@ -313,25 +314,28 @@ func (pxy *BaseProxy) handleUserTCPConnection(userConn net.Conn) {
 	name := pxy.GetName()
 	proxyType := cfg.Type
 	connectedAt := time.Now()
-	metrics.Server.OpenConnection(name, proxyType)
-	inCount, outCount, _ := libio.Join(local, userConn)
-	metrics.Server.CloseConnection(name, proxyType)
-	metrics.Server.AddTrafficIn(name, proxyType, inCount)
-	metrics.Server.AddTrafficOut(name, proxyType, outCount)
-
 	remoteHost, remotePortStr, _ := net.SplitHostPort(userConn.RemoteAddr().String())
 	remotePort, _ := strconv.Atoi(remotePortStr)
-	accesslog.Default.Write(&accesslog.Record{
+	metrics.Server.OpenConnection(name, proxyType)
+	connID, err := accesslog.Default.Insert(&accesslog.Record{
 		ProxyName:   name,
 		ProxyType:   proxyType,
 		ProxyUser:   pxy.GetUserInfo().User,
 		RemoteIP:    remoteHost,
 		RemotePort:  remotePort,
 		ConnectedAt: connectedAt.UnixMilli(),
-		Duration:    time.Since(connectedAt).Milliseconds(),
-		TrafficIn:   inCount,
-		TrafficOut:  outCount,
+		Event:       accesslog.EventConnected,
 	})
+	if err != nil {
+		xl.Warnf("accesslog: insert connected record error: %v", err)
+	}
+	inCount, outCount, _ := libio.Join(local, userConn)
+	metrics.Server.CloseConnection(name, proxyType)
+	metrics.Server.AddTrafficIn(name, proxyType, inCount)
+	metrics.Server.AddTrafficOut(name, proxyType, outCount)
+	if connID > 0 {
+		accesslog.Default.UpdateOnClose(connID, time.Since(connectedAt).Milliseconds(), inCount, outCount)
+	}
 	xl.Debugf("join connections closed")
 }
 

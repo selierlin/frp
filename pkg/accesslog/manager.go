@@ -25,6 +25,8 @@ import (
 // Writer is the interface for writing access log records.
 type Writer interface {
 	Write(r *Record)
+	Insert(r *Record) (int64, error)
+	UpdateOnClose(id, duration, trafficIn, trafficOut int64)
 	Query(p QueryParams) (*QueryResult, error)
 	Close() error
 }
@@ -45,9 +47,28 @@ func Register(w Writer) {
 // noopWriter silently discards all records.
 type noopWriter struct{}
 
-func (noopWriter) Write(*Record)                           {}
-func (noopWriter) Query(QueryParams) (*QueryResult, error) { return &QueryResult{}, nil }
-func (noopWriter) Close() error                            { return nil }
+func (noopWriter) Write(*Record)                              {}
+func (noopWriter) Insert(*Record) (int64, error)              { return 0, nil }
+func (noopWriter) UpdateOnClose(int64, int64, int64, int64)   {}
+func (noopWriter) Query(QueryParams) (*QueryResult, error)    { return &QueryResult{}, nil }
+func (noopWriter) Close() error                               { return nil }
+
+type insertReq struct {
+	record *Record
+	respCh chan insertResp
+}
+
+type insertResp struct {
+	id  int64
+	err error
+}
+
+type updateReq struct {
+	id         int64
+	duration   int64
+	trafficIn  int64
+	trafficOut int64
+}
 
 // Manager is the real Writer backed by SQLite.
 // It uses a single background goroutine for all writes (batch insert),
@@ -55,6 +76,8 @@ func (noopWriter) Close() error                            { return nil }
 type Manager struct {
 	st          *store
 	ch          chan *Record
+	insertCh    chan insertReq
+	updateCh    chan updateReq
 	reserveDays int
 	stopCh      chan struct{}
 	wg          sync.WaitGroup
@@ -70,6 +93,8 @@ func NewManager(storagePath string, reserveDays, queueSize int) (*Manager, error
 	return &Manager{
 		st:          st,
 		ch:          make(chan *Record, queueSize),
+		insertCh:    make(chan insertReq),
+		updateCh:    make(chan updateReq, queueSize),
 		reserveDays: reserveDays,
 		stopCh:      make(chan struct{}),
 	}, nil
@@ -82,6 +107,29 @@ func (m *Manager) Write(r *Record) {
 	case m.ch <- r:
 	default:
 		log.Warnf("accesslog: queue full, record dropped (proxy=%s remote=%s:%d)", r.ProxyName, r.RemoteIP, r.RemotePort)
+	}
+}
+
+// Insert synchronously inserts a record and returns its database ID.
+// It routes through the single writer goroutine to avoid concurrent-write issues.
+func (m *Manager) Insert(r *Record) (int64, error) {
+	req := insertReq{record: r, respCh: make(chan insertResp, 1)}
+	select {
+	case m.insertCh <- req:
+		resp := <-req.respCh
+		return resp.id, resp.err
+	case <-m.stopCh:
+		return 0, nil
+	}
+}
+
+// UpdateOnClose enqueues a close-time update for the record with the given ID.
+// If the queue is full the update is dropped and a warning is logged.
+func (m *Manager) UpdateOnClose(id, duration, trafficIn, trafficOut int64) {
+	select {
+	case m.updateCh <- updateReq{id, duration, trafficIn, trafficOut}:
+	default:
+		log.Warnf("accesslog: update queue full, close record dropped (id=%d)", id)
 	}
 }
 
@@ -131,6 +179,14 @@ func (m *Manager) writeLoop() {
 			batch = append(batch, r)
 			if len(batch) >= 100 {
 				flush()
+			}
+		case req := <-m.insertCh:
+			flush()
+			id, err := m.st.insert(req.record)
+			req.respCh <- insertResp{id, err}
+		case req := <-m.updateCh:
+			if err := m.st.updateOnClose(req.id, req.duration, req.trafficIn, req.trafficOut); err != nil {
+				log.Warnf("accesslog: update on close error: %v", err)
 			}
 		case <-ticker.C:
 			flush()

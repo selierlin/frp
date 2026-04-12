@@ -1,7 +1,7 @@
 <template>
   <el-card
     class="stat-card"
-    :class="{ clickable: !!to }"
+    :class="{ clickable: !!to || !!$attrs.onClick }"
     :body-style="{ padding: '20px' }"
     shadow="hover"
     @click="handleClick"

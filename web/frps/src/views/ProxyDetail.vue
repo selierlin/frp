@@ -81,7 +81,7 @@
           </div>
           <div class="stats-item">
             <span class="stats-label">Connections</span>
-            <span class="stats-value">{{ proxy.conns }}</span>
+            <span class="stats-value conn-link" @click="scrollToAccessLog">{{ proxy.conns }}</span>
           </div>
           <div class="stats-item">
             <span class="stats-label">Traffic</span>
@@ -258,7 +258,7 @@
         </div>
 
         <!-- Access Log Section -->
-        <div class="access-log-card">
+        <div class="access-log-card" ref="accessLogRef">
           <div class="access-log-header">
             <div class="access-log-title">
               <el-icon><List /></el-icon>
@@ -274,6 +274,17 @@
                 @change="fetchAccessLog(1)"
                 @clear="fetchAccessLog(1)"
               />
+              <el-select
+                v-model="logFilter.event"
+                size="small"
+                style="width: 130px"
+                @change="fetchAccessLog(1)"
+              >
+                <el-option label="All Events" value="" />
+                <el-option label="Active" value="connected" />
+                <el-option label="Closed" value="disconnected" />
+                <el-option label="Blocked" value="blocked" />
+              </el-select>
               <el-date-picker
                 v-model="logFilter.timeRange"
                 type="datetimerange"
@@ -296,6 +307,14 @@
               empty-text="No records"
               style="width: 100%"
             >
+              <el-table-column label="Event" width="90" align="center">
+                <template #default="{ row }">
+                  <el-tag v-if="row.event === 'connected'" type="primary" size="small">Active</el-tag>
+                  <el-tag v-else-if="row.event === 'disconnected'" type="info" size="small">Closed</el-tag>
+                  <el-tag v-else-if="row.event === 'blocked'" type="danger" size="small">Blocked</el-tag>
+                  <span v-else>—</span>
+                </template>
+              </el-table-column>
               <el-table-column label="Time" width="170">
                 <template #default="{ row }">
                   {{ formatTime(row.connectedAt) }}
@@ -431,6 +450,11 @@ const fromClient = computed(() => {
 })
 const proxy = ref<BaseProxy | null>(null)
 const loading = ref(true)
+const accessLogRef = ref<HTMLElement | null>(null)
+
+const scrollToAccessLog = () => {
+  accessLogRef.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
 
 // ── Access Log ──────────────────────────────────────────────
 const logLoading = ref(false)
@@ -438,8 +462,9 @@ const logRecords = ref<AccessLogRecord[]>([])
 const logTotal = ref(0)
 const logPage = ref(1)
 const logPageSize = ref(20)
-const logFilter = ref<{ remoteIP: string; timeRange: [Date, Date] | null }>({
+const logFilter = ref<{ remoteIP: string; event: string; timeRange: [Date, Date] | null }>({
   remoteIP: '',
+  event: '',
   timeRange: null,
 })
 
@@ -483,6 +508,7 @@ const fetchAccessLog = async (page = logPage.value) => {
       pageSize: logPageSize.value,
     }
     if (logFilter.value.remoteIP) params.remoteIP = logFilter.value.remoteIP
+    if (logFilter.value.event) params.event = logFilter.value.event
     if (logFilter.value.timeRange) {
       params.startTime = logFilter.value.timeRange[0].getTime()
       params.endTime = logFilter.value.timeRange[1].getTime()
@@ -854,6 +880,15 @@ html.dark .status-badge.online {
   font-size: 12px;
   font-weight: 500;
   color: var(--text-secondary);
+}
+
+.conn-link {
+  cursor: pointer;
+  color: var(--el-color-primary);
+}
+
+.conn-link:hover {
+  text-decoration: underline;
 }
 
 

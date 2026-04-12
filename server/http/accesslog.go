@@ -34,6 +34,7 @@ func (c *Controller) APIAccessLog(ctx *httppkg.Context) (any, error) {
 	params := accesslog.QueryParams{
 		ProxyName: ctx.Query("proxyName"),
 		RemoteIP:  ctx.Query("remoteIP"),
+		Event:     ctx.Query("event"),
 	}
 
 	if s := ctx.Query("startTime"); s != "" {

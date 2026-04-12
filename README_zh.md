@@ -93,6 +93,45 @@ v2 的构想是基于我多年在云原生领域，特别是在 K8s 和 ServiceM
 
 完整文档已经迁移至 [https://gofrp.org](https://gofrp.org)。
 
+## 构建
+
+### 从源码构建
+
+```bash
+# 构建 frps 和 frpc（如果 web 资源存在则打包）
+make build
+
+# 先构建 web 仪表板资源，再构建二进制文件
+make web && make build
+
+# 仅构建 frps
+make frps
+
+# 仅构建 frpc
+make frpc
+
+# 运行测试
+make test
+
+# 运行所有测试（包括 vet、单元测试和 e2e 测试）
+make alltest
+```
+
+### 跨平台构建
+
+使用提供的脚本构建多个平台的二进制文件：
+
+```bash
+./hack/build-all-platforms.sh
+```
+
+该脚本会自动检测并构建 web 资源（如果不存在），然后为以下平台编译 frps 和 frpc：
+- linux/amd64, linux/arm64, linux/arm/7
+- windows/amd64, windows/arm64
+- darwin/amd64, darwin/arm64
+
+输出的二进制文件位于 `bin/release/` 目录。
+
 ## 为 frp 做贡献
 
 frp 是一个免费且开源的项目，我们欢迎任何人为其开发和进步贡献力量。

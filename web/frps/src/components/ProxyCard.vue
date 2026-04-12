@@ -1,5 +1,5 @@
 <template>
-  <router-link :to="proxyLink" class="proxy-card">
+  <div class="proxy-card" @click="router.push(proxyLink)">
     <div class="card-main">
       <div class="card-left">
         <div class="card-header">
@@ -16,7 +16,10 @@
           </span>
           <span class="meta-item">
             <span class="meta-label">Connections:</span>
-            <span class="meta-value">{{ proxy.conns }}</span>
+            <span
+              class="meta-value conn-link"
+              @click.stop="emit('show-connections', proxy.name)"
+            >{{ proxy.conns }}</span>
           </span>
           <span class="meta-item" v-if="proxy.clientID">
             <span class="meta-label">Client:</span>
@@ -48,12 +51,12 @@
         </div>
       </div>
     </div>
-  </router-link>
+  </div>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { Top, Bottom } from '@element-plus/icons-vue'
 import { formatFileSize } from '../utils/format'
 import type { BaseProxy } from '../utils/proxy'
@@ -64,7 +67,9 @@ interface Props {
 }
 
 const props = defineProps<Props>()
+const emit = defineEmits<{ (e: 'show-connections', name: string): void }>()
 const route = useRoute()
+const router = useRouter()
 
 const proxyLink = computed(() => {
   const base = `/proxy/${props.proxy.name}`
@@ -158,6 +163,15 @@ const proxyLink = computed(() => {
   font-size: 13px;
   font-weight: 500;
   color: var(--el-text-color-regular);
+}
+
+.conn-link {
+  cursor: pointer;
+  color: var(--el-color-primary);
+}
+
+.conn-link:hover {
+  text-decoration: underline;
 }
 
 /* Right Section */

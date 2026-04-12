@@ -14,6 +14,13 @@
 
 package accesslog
 
+// Event types for access log records.
+const (
+	EventConnected    = "connected"
+	EventDisconnected = "disconnected"
+	EventBlocked      = "blocked"
+)
+
 // Record represents a single third-party access event on a proxy.
 type Record struct {
 	ID          int64  `json:"id"`
@@ -33,16 +40,19 @@ type Record struct {
 	StatusCode int    `json:"statusCode,omitempty"`
 	// Blocked is true when the connection was rejected by access control.
 	Blocked bool `json:"blocked,omitempty"`
+	// Event indicates the type of access event: "connected", "disconnected", or "blocked".
+	Event string `json:"event,omitempty"`
 }
 
 // QueryParams holds filter and pagination parameters for querying access logs.
 type QueryParams struct {
 	ProxyName string
 	RemoteIP  string
-	StartTime int64 // unix milliseconds, 0 means no lower bound
-	EndTime   int64 // unix milliseconds, 0 means no upper bound
-	Page      int   // 1-based
-	PageSize  int   // max 200
+	Event     string // "connected", "disconnected", "blocked", or "" for all
+	StartTime int64  // unix milliseconds, 0 means no lower bound
+	EndTime   int64  // unix milliseconds, 0 means no upper bound
+	Page      int    // 1-based
+	PageSize  int    // max 200
 }
 
 // QueryResult is the paginated result of a log query.
