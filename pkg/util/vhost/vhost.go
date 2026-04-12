@@ -121,6 +121,14 @@ type RouteConfig struct {
 	ResponseHeaders map[string]string
 	RouteByHTTPUser string
 
+	// IP access control (evaluated before AllowUserAgents).
+	// DenyIPs is checked first; then AllowIPs OR AllowUserAgents (OR logic).
+	AllowIPs []string
+	DenyIPs  []string
+	// AllowUserAgents specifies User-Agent glob patterns (wildcard * supported).
+	// A request is allowed if its source IP matches AllowIPs OR its UA matches any pattern here.
+	AllowUserAgents []string
+
 	CreateConnFn           CreateConnFunc
 	ChooseEndpointFn       ChooseEndpointFunc
 	CreateConnByEndpointFn CreateConnByEndpointFunc

@@ -9,7 +9,10 @@ export class Client {
   version: string
   hostname: string
   ip: string
+  os: string
+  arch: string
   metas: Map<string, string>
+  poolCount: number
   firstConnectedAt: Date
   lastConnectedAt: Date
   disconnectedAt?: Date
@@ -23,6 +26,9 @@ export class Client {
     this.version = data.version || ''
     this.hostname = data.hostname
     this.ip = data.clientIP || ''
+    this.os = data.os || ''
+    this.arch = data.arch || ''
+    this.poolCount = data.poolCount || 0
     this.metas = new Map<string, string>()
     if (data.metas) {
       for (const [key, value] of Object.entries(data.metas)) {

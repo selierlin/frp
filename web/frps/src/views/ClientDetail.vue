@@ -58,6 +58,14 @@
               <span class="info-label">Run ID</span>
               <span class="info-value">{{ client.runID }}</span>
             </div>
+            <div v-if="client.os || client.arch" class="info-item">
+              <span class="info-label">Platform</span>
+              <span class="info-value">{{ [client.os, client.arch].filter(Boolean).join(' / ') }}</span>
+            </div>
+            <div v-if="client.poolCount" class="info-item">
+              <span class="info-label">Pool Count</span>
+              <span class="info-value">{{ client.poolCount }}</span>
+            </div>
             <div class="info-item">
               <span class="info-label">First Connected</span>
               <span class="info-value">{{ client.firstConnectedAgo }}</span>
@@ -69,6 +77,17 @@
               <span class="info-value">{{
                 client.online ? client.lastConnectedAgo : client.disconnectedAgo
               }}</span>
+            </div>
+          </div>
+
+          <!-- Metas -->
+          <div v-if="client.metas && client.metas.size > 0" class="metas-section">
+            <div class="metas-title">Metadata</div>
+            <div class="metas-grid">
+              <div v-for="[key, value] in client.metas" :key="key" class="meta-item-card">
+                <span class="meta-key">{{ key }}</span>
+                <span class="meta-val">{{ value }}</span>
+              </div>
             </div>
           </div>
         </div>
@@ -431,6 +450,48 @@ html.dark .status-badge.online {
   color: var(--text-primary);
   font-weight: 500;
   word-break: break-all;
+}
+
+/* Metas Section */
+.metas-section {
+  padding: 16px 20px;
+  border-top: 1px solid var(--header-border);
+}
+
+.metas-title {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 10px;
+}
+
+.metas-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.meta-item-card {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: var(--el-fill-color);
+  border-radius: 6px;
+  border: 1px solid var(--el-border-color-lighter);
+  font-size: 12px;
+}
+
+.meta-key {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.meta-val {
+  color: var(--text-primary);
+  font-weight: 500;
 }
 
 /* Proxies Card */

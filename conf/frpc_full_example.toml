@@ -209,6 +209,12 @@ healthCheck.intervalSeconds = 10
 # Additional meta info for each proxy. It will be passed to the server-side plugin for use.
 metadatas.var1 = "abc"
 metadatas.var2 = "123"
+# IP access control for external users connecting to this proxy via frps.
+# denyIPs is evaluated before allowIPs.
+# Supports individual IPs and CIDR ranges (IPv4 and IPv6).
+# allowIPs = ["192.168.1.0/24", "10.0.0.1"]  # only these IPs can access
+# denyIPs = ["1.2.3.4", "5.6.7.0/24"]        # these IPs are always rejected
+# Note: allowUserAgents is only effective for HTTP/HTTPS proxies and will be ignored here.
 # You can add some extra information to the proxy through annotations.
 # These annotations will be displayed on the frps dashboard.
 [proxies.annotations]
@@ -261,6 +267,14 @@ healthCheck.timeoutSeconds = 3
 healthCheck.httpHeaders=[
     { name = "x-from-where", value = "frp" }
 ]
+# IP access control (all proxy types): denyIPs is checked first, then allowIPs.
+# Supports individual IPs and CIDR ranges (IPv4 and IPv6).
+# allowIPs = ["192.168.1.0/24", "10.0.0.1"]  # only these IPs can access
+# denyIPs = ["1.2.3.4", "5.6.7.0/24"]        # these IPs are always rejected
+# User-Agent access control (HTTP/HTTPS only): supports glob wildcard *.
+# A request is allowed if its source IP matches allowIPs OR its UA matches any pattern here.
+# Empty string "" matches only empty UA; "*" matches all UAs.
+# allowUserAgents = ["Mozilla/*", "curl/*", "*Chrome*"]
 
 [[proxies]]
 name = "web02"

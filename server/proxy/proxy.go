@@ -260,6 +260,12 @@ func (pxy *BaseProxy) handleUserTCPConnection(userConn net.Conn) {
 		return
 	}
 
+	// IP access control
+	if err := pxy.checkIPAccess(userConn.RemoteAddr()); err != nil {
+		xl.Warnf("the user conn [%s] was rejected by ip access control: %v", userConn.RemoteAddr().String(), err)
+		return
+	}
+
 	// try all connections from the pool
 	workConn, err := pxy.GetWorkConnFromPool(userConn.RemoteAddr(), userConn.LocalAddr())
 	if err != nil {
@@ -300,6 +306,39 @@ func (pxy *BaseProxy) handleUserTCPConnection(userConn net.Conn) {
 	metrics.Server.AddTrafficIn(name, proxyType, inCount)
 	metrics.Server.AddTrafficOut(name, proxyType, outCount)
 	xl.Debugf("join connections closed")
+}
+
+// checkIPAccess checks whether the remote address is allowed to access this proxy.
+// DenyIPs is evaluated first, then AllowIPs.
+func (pxy *BaseProxy) checkIPAccess(addr net.Addr) error {
+	cfg := pxy.configurer.GetBaseConfig()
+	if len(cfg.AllowIPs) == 0 && len(cfg.DenyIPs) == 0 {
+		return nil
+	}
+	host, _, err := net.SplitHostPort(addr.String())
+	if err != nil {
+		return fmt.Errorf("invalid remote addr: %w", err)
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return fmt.Errorf("cannot parse IP: %s", host)
+	}
+	// DenyIPs is checked first
+	for _, cidr := range cfg.DenyIPs {
+		if netpkg.MatchIP(ip, cidr) {
+			return fmt.Errorf("ip %s is in denyIPs", host)
+		}
+	}
+	// AllowIPs whitelist (empty means no restriction)
+	if len(cfg.AllowIPs) > 0 {
+		for _, cidr := range cfg.AllowIPs {
+			if netpkg.MatchIP(ip, cidr) {
+				return nil
+			}
+		}
+		return fmt.Errorf("ip %s is not in allowIPs", host)
+	}
+	return nil
 }
 
 type Options struct {

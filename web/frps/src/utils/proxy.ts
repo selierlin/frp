@@ -24,6 +24,15 @@ class BaseProxy {
   multiplexer: string
   routeByHTTPUser: string
 
+  // IP / UA access control
+  allowIPs: string[]
+  denyIPs: string[]
+  allowUserAgents: string[]
+
+  // Backend
+  localIP: string
+  localPort: number
+
   constructor(proxyStats: any) {
     this.name = proxyStats.name
     this.type = ''
@@ -57,6 +66,13 @@ class BaseProxy {
     this.subdomain = ''
     this.multiplexer = ''
     this.routeByHTTPUser = ''
+
+    this.allowIPs = proxyStats.conf?.allowIPs || []
+    this.denyIPs = proxyStats.conf?.denyIPs || []
+    this.allowUserAgents = proxyStats.conf?.allowUserAgents || []
+
+    this.localIP = proxyStats.conf?.localIP || ''
+    this.localPort = proxyStats.conf?.localPort || 0
   }
 }
 

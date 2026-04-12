@@ -454,6 +454,12 @@ func (ctl *Control) RegisterProxy(pxyMsg *msg.NewProxy) (remoteAddr string, err 
 		return
 	}
 
+	// Warn if allowUserAgents is configured on a non-HTTP proxy type, where it has no effect.
+	if len(pxyMsg.AllowUserAgents) > 0 && pxyMsg.ProxyType != string(v1.ProxyTypeHTTP) {
+		ctl.xl.Warnf("proxy [%s] type [%s]: allowUserAgents is only effective for HTTP proxies and will be ignored",
+			pxyMsg.ProxyName, pxyMsg.ProxyType)
+	}
+
 	// User info
 	userInfo := plugin.UserInfo{
 		User:  ctl.sessionCtx.LoginMsg.User,

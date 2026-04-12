@@ -128,6 +128,18 @@ type ProxyBaseConfig struct {
 	Metadatas    map[string]string  `json:"metadatas,omitempty"`
 	LoadBalancer LoadBalancerConfig `json:"loadBalancer,omitempty"`
 	HealthCheck  HealthCheckConfig  `json:"healthCheck,omitempty"`
+	// AllowIPs specifies IP addresses or CIDR ranges allowed to access this proxy.
+	// If non-empty, only matching source IPs are allowed. Supports IPv4 and IPv6.
+	// Example: ["192.168.1.0/24", "10.0.0.1"]
+	// DenyIPs is evaluated before AllowIPs.
+	AllowIPs []string `json:"allowIPs,omitempty"`
+	// DenyIPs specifies IP addresses or CIDR ranges denied from accessing this proxy.
+	// Matched IPs are rejected regardless of AllowIPs.
+	DenyIPs []string `json:"denyIPs,omitempty"`
+	// AllowUserAgents specifies User-Agent glob patterns allowed to access this proxy (http/https only).
+	// A request is allowed if its source IP matches AllowIPs OR its User-Agent matches any pattern here.
+	// Supports wildcard * (e.g. "Mozilla/*", "*Chrome*").
+	AllowUserAgents []string `json:"allowUserAgents,omitempty"`
 	ProxyBackend
 }
 
@@ -138,6 +150,9 @@ func (c ProxyBaseConfig) Clone() ProxyBaseConfig {
 	out.Metadatas = maps.Clone(c.Metadatas)
 	out.HealthCheck = c.HealthCheck.Clone()
 	out.ProxyBackend = c.ProxyBackend.Clone()
+	out.AllowIPs = slices.Clone(c.AllowIPs)
+	out.DenyIPs = slices.Clone(c.DenyIPs)
+	out.AllowUserAgents = slices.Clone(c.AllowUserAgents)
 	return out
 }
 
@@ -174,6 +189,11 @@ func (c *ProxyBaseConfig) MarshalToMsg(m *msg.NewProxy) {
 	m.GroupKey = c.LoadBalancer.GroupKey
 	m.Metas = c.Metadatas
 	m.Annotations = c.Annotations
+	m.AllowIPs = slices.Clone(c.AllowIPs)
+	m.DenyIPs = slices.Clone(c.DenyIPs)
+	m.AllowUserAgents = slices.Clone(c.AllowUserAgents)
+	m.LocalIP = c.LocalIP
+	m.LocalPort = c.LocalPort
 }
 
 func (c *ProxyBaseConfig) UnmarshalFromMsg(m *msg.NewProxy) {
@@ -191,6 +211,11 @@ func (c *ProxyBaseConfig) UnmarshalFromMsg(m *msg.NewProxy) {
 	c.LoadBalancer.GroupKey = m.GroupKey
 	c.Metadatas = m.Metas
 	c.Annotations = m.Annotations
+	c.AllowIPs = slices.Clone(m.AllowIPs)
+	c.DenyIPs = slices.Clone(m.DenyIPs)
+	c.AllowUserAgents = slices.Clone(m.AllowUserAgents)
+	c.LocalIP = m.LocalIP
+	c.LocalPort = m.LocalPort
 }
 
 type TypedProxyConfig struct {

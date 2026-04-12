@@ -630,7 +630,12 @@ func (svr *Service) RegisterControl(ctlConn net.Conn, loginMsg *msg.Login, inter
 	if host, _, err := net.SplitHostPort(remoteAddr); err == nil {
 		remoteAddr = host
 	}
-	_, conflict := svr.clientRegistry.Register(loginMsg.User, loginMsg.ClientID, loginMsg.RunID, loginMsg.Hostname, loginMsg.Version, remoteAddr)
+	_, conflict := svr.clientRegistry.Register(
+		loginMsg.User, loginMsg.ClientID, loginMsg.RunID,
+		loginMsg.Hostname, loginMsg.Version,
+		loginMsg.Os, loginMsg.Arch,
+		remoteAddr, loginMsg.Metas, loginMsg.PoolCount,
+	)
 	if conflict {
 		svr.ctlManager.Del(loginMsg.RunID, ctl)
 		ctl.Close()

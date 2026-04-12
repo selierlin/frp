@@ -6,7 +6,10 @@ export interface ClientInfoData {
   version?: string
   hostname: string
   clientIP?: string
+  os?: string
+  arch?: string
   metas?: Record<string, string>
+  poolCount?: number
   firstConnectedAt: number
   lastConnectedAt: number
   disconnectedAt?: number

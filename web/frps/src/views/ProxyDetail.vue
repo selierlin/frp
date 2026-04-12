@@ -122,6 +122,16 @@
               </div>
             </div>
 
+            <div v-if="proxy.localPort > 0" class="config-item-card">
+              <div class="config-item-icon backend">
+                <el-icon><Cpu /></el-icon>
+              </div>
+              <div class="config-item-content">
+                <span class="config-item-label">Backend</span>
+                <span class="config-item-value">{{ proxy.localIP }}:{{ proxy.localPort }}</span>
+              </div>
+            </div>
+
             <div v-if="proxy.customDomains" class="config-item-card">
               <div class="config-item-icon domains">
                 <el-icon><Link /></el-icon>
@@ -185,6 +195,42 @@
                 }}</span>
               </div>
             </div>
+
+            <div v-if="proxy.allowIPs && proxy.allowIPs.length > 0" class="config-item-card">
+              <div class="config-item-icon allow-ip">
+                <el-icon><CircleCheck /></el-icon>
+              </div>
+              <div class="config-item-content">
+                <span class="config-item-label">Allow IPs</span>
+                <div class="config-tag-list">
+                  <span v-for="ip in proxy.allowIPs" :key="ip" class="config-tag config-tag--allow">{{ ip }}</span>
+                </div>
+              </div>
+            </div>
+
+            <div v-if="proxy.denyIPs && proxy.denyIPs.length > 0" class="config-item-card">
+              <div class="config-item-icon deny-ip">
+                <el-icon><CircleClose /></el-icon>
+              </div>
+              <div class="config-item-content">
+                <span class="config-item-label">Deny IPs</span>
+                <div class="config-tag-list">
+                  <span v-for="ip in proxy.denyIPs" :key="ip" class="config-tag config-tag--deny">{{ ip }}</span>
+                </div>
+              </div>
+            </div>
+
+            <div v-if="proxy.allowUserAgents && proxy.allowUserAgents.length > 0" class="config-item-card">
+              <div class="config-item-icon useragent">
+                <el-icon><Monitor /></el-icon>
+              </div>
+              <div class="config-item-content">
+                <span class="config-item-label">Allow User-Agents</span>
+                <div class="config-tag-list">
+                  <span v-for="ua in proxy.allowUserAgents" :key="ua" class="config-tag config-tag--ua">{{ ua }}</span>
+                </div>
+              </div>
+            </div>
           </div>
 
           <!-- Annotations -->
@@ -240,6 +286,8 @@ import {
   Lightning,
   Tickets,
   Location,
+  CircleCheck,
+  CircleClose,
 } from '@element-plus/icons-vue'
 import { getProxyByName } from '../api/proxy'
 import { getServerInfo } from '../api/server'
@@ -694,6 +742,96 @@ html.dark .status-badge.online {
   color: #ec4899;
 }
 
+.config-item-icon.allow-ip {
+  background: rgba(34, 197, 94, 0.1);
+  color: #22c55e;
+}
+
+.config-item-icon.deny-ip {
+  background: rgba(239, 68, 68, 0.1);
+  color: #ef4444;
+}
+
+.config-item-icon.useragent {
+  background: rgba(59, 130, 246, 0.1);
+  color: #3b82f6;
+}
+
+.config-item-icon.backend {
+  background: rgba(234, 179, 8, 0.1);
+  color: #ca8a04;
+}
+
+html.dark .config-item-icon.backend {
+  background: rgba(234, 179, 8, 0.15);
+  color: #facc15;
+}
+
+html.dark .config-item-icon.allow-ip {
+  background: rgba(34, 197, 94, 0.15);
+}
+
+html.dark .config-item-icon.deny-ip {
+  background: rgba(239, 68, 68, 0.15);
+}
+
+html.dark .config-item-icon.useragent {
+  background: rgba(59, 130, 246, 0.15);
+}
+
+.config-tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.config-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 500;
+  font-family: monospace;
+}
+
+.config-tag--allow {
+  background: rgba(34, 197, 94, 0.1);
+  color: #16a34a;
+  border: 1px solid rgba(34, 197, 94, 0.2);
+}
+
+.config-tag--deny {
+  background: rgba(239, 68, 68, 0.1);
+  color: #dc2626;
+  border: 1px solid rgba(239, 68, 68, 0.2);
+}
+
+.config-tag--ua {
+  background: rgba(59, 130, 246, 0.1);
+  color: #2563eb;
+  border: 1px solid rgba(59, 130, 246, 0.2);
+}
+
+html.dark .config-tag--allow {
+  background: rgba(34, 197, 94, 0.15);
+  color: #4ade80;
+  border-color: rgba(34, 197, 94, 0.25);
+}
+
+html.dark .config-tag--deny {
+  background: rgba(239, 68, 68, 0.15);
+  color: #f87171;
+  border-color: rgba(239, 68, 68, 0.25);
+}
+
+html.dark .config-tag--ua {
+  background: rgba(59, 130, 246, 0.15);
+  color: #60a5fa;
+  border-color: rgba(59, 130, 246, 0.25);
+}
+
 html.dark .config-item-icon.encryption,
 html.dark .config-item-icon.compression {
   background: rgba(34, 197, 94, 0.15);
@@ -716,7 +854,6 @@ html.dark .config-item-icon.host {
 html.dark .config-item-icon.route {
   background: rgba(236, 72, 153, 0.15);
 }
-
 .config-item-content {
   display: flex;
   flex-direction: column;

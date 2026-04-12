@@ -62,6 +62,9 @@ func (pxy *HTTPProxy) Run() (remoteAddr string, err error) {
 		Username:        pxy.cfg.HTTPUser,
 		Password:        pxy.cfg.HTTPPassword,
 		CreateConnFn:    pxy.GetRealConn,
+		AllowIPs:        pxy.cfg.AllowIPs,
+		DenyIPs:         pxy.cfg.DenyIPs,
+		AllowUserAgents: pxy.cfg.AllowUserAgents,
 	}
 
 	locations := pxy.cfg.Locations

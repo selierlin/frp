@@ -34,6 +34,7 @@ import (
 
 	httppkg "github.com/fatedier/frp/pkg/util/http"
 	"github.com/fatedier/frp/pkg/util/log"
+	utilnet "github.com/fatedier/frp/pkg/util/net"
 )
 
 var ErrNoRouteFound = errors.New("no route found")
@@ -199,6 +200,82 @@ func (rp *HTTPReverseProxy) CheckAuth(domain, location, routeByHTTPUser, user, p
 	return true
 }
 
+// RouteConfig is also extended with AllowIPs/DenyIPs for HTTP-level access control.
+// checkHTTPAccess returns true if the request should be allowed through.
+// Logic:
+//  1. If source IP is in DenyIPs → reject
+//  2. If AllowIPs or AllowUserAgents are non-empty, at least one must match (OR) → allow
+//  3. Otherwise → allow
+func checkHTTPAccess(remoteAddr, userAgent string, allowIPs, denyIPs, allowUserAgents []string) bool {
+	host, _, err := parseHost(remoteAddr)
+	if err != nil {
+		// can't parse addr, deny for safety
+		return false
+	}
+
+	// 1. DenyIPs always wins
+	for _, cidr := range denyIPs {
+		if matchIPStr(host, cidr) {
+			return false
+		}
+	}
+
+	// 2. If no allow rules at all, pass through
+	if len(allowIPs) == 0 && len(allowUserAgents) == 0 {
+		return true
+	}
+
+	// 3. OR: IP match OR UA match
+	for _, cidr := range allowIPs {
+		if matchIPStr(host, cidr) {
+			return true
+		}
+	}
+	for _, pattern := range allowUserAgents {
+		if matchUserAgent(userAgent, pattern) {
+			return true
+		}
+	}
+	return false
+}
+
+func parseHost(addr string) (string, string, error) {
+	host, port, err := net.SplitHostPort(addr)
+	return host, port, err
+}
+
+// matchIPStr checks whether the host string matches a CIDR range or exact IP.
+func matchIPStr(host, cidrOrIP string) bool {
+	return utilnet.MatchIPStr(host, cidrOrIP)
+}
+
+// matchUserAgent checks whether ua matches a single glob pattern.
+// Only '*' is supported as a wildcard; it matches any sequence of characters,
+// including '/' (unlike path.Match which treats '/' as a separator).
+// Example patterns: "Mozilla/*", "*Chrome*", "curl*".
+func matchUserAgent(ua, pattern string) bool {
+	// No wildcard: require exact match.
+	parts := strings.Split(pattern, "*")
+	if len(parts) == 1 {
+		return ua == pattern
+	}
+	// The first segment must be a prefix of ua.
+	if !strings.HasPrefix(ua, parts[0]) {
+		return false
+	}
+	// Advance past the matched prefix, then locate each subsequent segment
+	// in order within the remaining string.
+	remaining := ua[len(parts[0]):]
+	for _, p := range parts[1:] {
+		idx := strings.Index(remaining, p)
+		if idx < 0 {
+			return false
+		}
+		remaining = remaining[idx+len(p):]
+	}
+	return true
+}
+
 // getVhost tries to get vhost router by route policy.
 func (rp *HTTPReverseProxy) getVhost(domain, location, routeByHTTPUser string) (*Router, bool) {
 	findRouter := func(inDomain, inLocation, inRouteByHTTPUser string) (*Router, bool) {
@@ -307,6 +384,18 @@ func (rp *HTTPReverseProxy) ServeHTTP(rw http.ResponseWriter, req *http.Request)
 	}
 
 	newreq := rp.injectRequestInfoToCtx(req)
+	// IP + UA access control (OR logic: pass if IP matches AllowIPs OR UA matches AllowUserAgents).
+	// DenyIPs is always checked first and always rejects.
+	rc, _ := newreq.Context().Value(RouteConfigKey).(*RouteConfig)
+	if rc != nil && (len(rc.AllowIPs) > 0 || len(rc.DenyIPs) > 0 || len(rc.AllowUserAgents) > 0) {
+		ua := req.Header.Get("User-Agent")
+		if !checkHTTPAccess(req.RemoteAddr, ua, rc.AllowIPs, rc.DenyIPs, rc.AllowUserAgents) {
+			log.Debugf("http request from [%s] rejected by access control, UA: %q", req.RemoteAddr, ua)
+			http.Error(rw, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+			return
+		}
+	}
+
 	if req.Method == http.MethodConnect {
 		rp.connectHandler(rw, newreq)
 	} else {

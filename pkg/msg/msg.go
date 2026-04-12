@@ -129,6 +129,19 @@ type NewProxy struct {
 	Sk         string   `json:"sk,omitempty"`
 	AllowUsers []string `json:"allow_users,omitempty"`
 
+	// backend (client-side only, forwarded to frps for display)
+	LocalIP   string `json:"local_ip,omitempty"`
+	LocalPort int    `json:"local_port,omitempty"`
+
+	// IP access control for all proxy types
+	// DenyIPs is checked first, then AllowIPs.
+	AllowIPs []string `json:"allow_ips,omitempty"`
+	DenyIPs  []string `json:"deny_ips,omitempty"`
+
+	// AllowUserAgents specifies User-Agent patterns allowed to access this proxy (http/https only).
+	// If non-empty, a request is allowed if its IP matches AllowIPs OR its UA matches any pattern here.
+	AllowUserAgents []string `json:"allow_user_agents,omitempty"`
+
 	// tcpmux
 	Multiplexer string `json:"multiplexer,omitempty"`
 }
