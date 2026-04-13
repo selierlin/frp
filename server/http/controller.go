@@ -22,12 +22,15 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fatedier/frp/pkg/config"
 	"github.com/fatedier/frp/pkg/config/types"
 	v1 "github.com/fatedier/frp/pkg/config/v1"
 	"github.com/fatedier/frp/pkg/metrics/mem"
 	httppkg "github.com/fatedier/frp/pkg/util/http"
+	"github.com/fatedier/frp/pkg/util/jsonx"
 	"github.com/fatedier/frp/pkg/util/log"
 	"github.com/fatedier/frp/pkg/util/version"
+	"github.com/fatedier/frp/pkg/util/vhost"
 	"github.com/fatedier/frp/server/http/model"
 	"github.com/fatedier/frp/server/proxy"
 	"github.com/fatedier/frp/server/registry"
@@ -35,9 +38,12 @@ import (
 
 type Controller struct {
 	// dependencies
-	serverCfg      *v1.ServerConfig
-	clientRegistry *registry.ClientRegistry
-	pxyManager     ProxyManager
+	serverCfg        *v1.ServerConfig
+	clientRegistry   *registry.ClientRegistry
+	pxyManager       ProxyManager
+	httpReverseProxy *vhost.HTTPReverseProxy
+	cfgFilePath      string
+	cfgFileFormat    string
 }
 
 type ProxyManager interface {
@@ -48,11 +54,17 @@ func NewController(
 	serverCfg *v1.ServerConfig,
 	clientRegistry *registry.ClientRegistry,
 	pxyManager ProxyManager,
+	httpReverseProxy *vhost.HTTPReverseProxy,
+	cfgFilePath string,
+	cfgFileFormat string,
 ) *Controller {
 	return &Controller{
-		serverCfg:      serverCfg,
-		clientRegistry: clientRegistry,
-		pxyManager:     pxyManager,
+		serverCfg:        serverCfg,
+		clientRegistry:   clientRegistry,
+		pxyManager:       pxyManager,
+		httpReverseProxy: httpReverseProxy,
+		cfgFilePath:      cfgFilePath,
+		cfgFileFormat:    cfgFileFormat,
 	}
 }
 
@@ -356,4 +368,76 @@ func getConfFromConfigurer(cfg v1.ProxyConfigurer) any {
 		return &model.XTCPOutConf{BaseOutConf: outBase}
 	}
 	return outBase
+}
+
+// APIGetGlobalACL handles GET /api/config/globalACL
+func (c *Controller) APIGetGlobalACL(ctx *httppkg.Context) (any, error) {
+	if c.httpReverseProxy == nil {
+		return nil, httppkg.NewError(http.StatusNotFound, "HTTP reverse proxy not enabled")
+	}
+
+	acl := c.httpReverseProxy.GetGlobalACL()
+	if acl == nil {
+		return model.GlobalACLResp{}, nil
+	}
+	return model.GlobalACLResp{
+		AllowIPs:        acl.AllowIPs,
+		DenyIPs:         acl.DenyIPs,
+		AllowUserAgents: acl.AllowUserAgents,
+		DenyUserAgents:  acl.DenyUserAgents,
+	}, nil
+}
+
+// APIUpdateGlobalACL handles PUT /api/config/globalACL
+func (c *Controller) APIUpdateGlobalACL(ctx *httppkg.Context) (any, error) {
+	if c.httpReverseProxy == nil {
+		return nil, httppkg.NewError(http.StatusNotFound, "HTTP reverse proxy not enabled")
+	}
+
+	body, err := ctx.Body()
+	if err != nil {
+		return nil, httppkg.NewError(http.StatusBadRequest, fmt.Sprintf("read request body error: %v", err))
+	}
+
+	var req model.GlobalACLUpdateReq
+	if err := jsonx.Unmarshal(body, &req); err != nil {
+		return nil, httppkg.NewError(http.StatusBadRequest, fmt.Sprintf("parse JSON error: %v", err))
+	}
+
+	// 1. Update runtime configuration
+	newACL := &vhost.GlobalACL{
+		AllowIPs:        req.AllowIPs,
+		DenyIPs:         req.DenyIPs,
+		AllowUserAgents: req.AllowUserAgents,
+		DenyUserAgents:  req.DenyUserAgents,
+	}
+	c.httpReverseProxy.SetGlobalACL(newACL)
+
+	// 2. Update ServerConfig memory copy
+	c.serverCfg.GlobalAllowIPs = req.AllowIPs
+	c.serverCfg.GlobalDenyIPs = req.DenyIPs
+	c.serverCfg.GlobalAllowUserAgents = req.AllowUserAgents
+	c.serverCfg.GlobalDenyUserAgents = req.DenyUserAgents
+
+	// 3. Persist to config file (if available)
+	if c.cfgFilePath != "" {
+		if err := config.SaveServerConfigPartial(c.cfgFilePath, func(cfg *v1.ServerConfig) {
+			cfg.GlobalAllowIPs = req.AllowIPs
+			cfg.GlobalDenyIPs = req.DenyIPs
+			cfg.GlobalAllowUserAgents = req.AllowUserAgents
+			cfg.GlobalDenyUserAgents = req.DenyUserAgents
+		}); err != nil {
+			log.Warnf("save global ACL to config file error: %v", err)
+			// Don't fail the request; runtime config is already effective
+		}
+	} else {
+		log.Warnf("config file path not set, global ACL changes will not persist after restart")
+	}
+
+	return model.GlobalACLResp{
+		AllowIPs:        req.AllowIPs,
+		DenyIPs:         req.DenyIPs,
+		AllowUserAgents: req.AllowUserAgents,
+		DenyUserAgents:  req.DenyUserAgents,
+	}, nil
 }

@@ -178,3 +178,23 @@ ops = ["NewProxy"]
 # reserveDays = 30
 # queueSize is the size of the internal async write queue (default 10000).
 # queueSize = 10000
+
+# trustedProxies specifies IP addresses or CIDR ranges of trusted reverse proxies
+# (e.g. Nginx, load balancers) in front of frps.
+# When a request arrives from one of these IPs, frps will extract the real client IP
+# from the X-Forwarded-For header (first entry in the chain) instead of using the
+# TCP connection's remote address directly.
+# This enables correct IP logging and IP-based access control (globalAllowIPs /
+# globalDenyIPs / per-proxy allowIPs / denyIPs) when frps is behind a reverse proxy.
+# Leave empty (or omit) to disable this feature — frps will use req.RemoteAddr as-is.
+# Security note: only IPs listed here are trusted to supply X-Forwarded-For;
+# requests from other sources always use the raw connection IP to prevent spoofing.
+# trustedProxies = ["127.0.0.1/8", "10.0.0.0/8"]
+
+# globalAllowIPs / globalDenyIPs / globalAllowUserAgents / globalDenyUserAgents
+# apply to all HTTP/HTTPS proxies server-wide before per-proxy rules are checked.
+# When trustedProxies is configured, these rules operate on the real client IP.
+# globalAllowIPs = ["192.168.1.0/24"]
+# globalDenyIPs = ["10.0.0.100"]
+# globalAllowUserAgents = ["Mozilla/*"]
+# globalDenyUserAgents = ["*bot*"]

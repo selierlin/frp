@@ -137,3 +137,19 @@ type GetProxyTrafficResp struct {
 	TrafficIn  []int64 `json:"trafficIn"`
 	TrafficOut []int64 `json:"trafficOut"`
 }
+
+// GlobalACLResp represents the response for GET /api/config/globalACL
+type GlobalACLResp struct {
+	AllowIPs        []string `json:"allowIPs"`
+	DenyIPs         []string `json:"denyIPs"`
+	AllowUserAgents []string `json:"allowUserAgents"`
+	DenyUserAgents  []string `json:"denyUserAgents"`
+}
+
+// GlobalACLUpdateReq represents the request body for PUT /api/config/globalACL
+type GlobalACLUpdateReq struct {
+	AllowIPs        []string `json:"allowIPs"`
+	DenyIPs         []string `json:"denyIPs"`
+	AllowUserAgents []string `json:"allowUserAgents"`
+	DenyUserAgents  []string `json:"denyUserAgents"`
+}

@@ -26,6 +26,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	libio "github.com/fatedier/golib/io"
@@ -79,6 +80,10 @@ type HTTPReverseProxy struct {
 	vhostRouter *Routers
 
 	responseHeaderTimeout time.Duration
+	globalACL             *GlobalACL
+	globalACLMu           sync.RWMutex // protects globalACL
+	trustedProxies        []string
+	trustedProxiesMu      sync.RWMutex // protects trustedProxies
 }
 
 func NewHTTPReverseProxy(option HTTPReverseProxyOptions, vhostRouter *Routers) *HTTPReverseProxy {
@@ -176,6 +181,36 @@ func NewHTTPReverseProxy(option HTTPReverseProxyOptions, vhostRouter *Routers) *
 	return rp
 }
 
+// SetGlobalACL sets the server-level access control rules.
+// Safe to call at any time; updates are immediately effective.
+func (rp *HTTPReverseProxy) SetGlobalACL(acl *GlobalACL) {
+	rp.globalACLMu.Lock()
+	rp.globalACL = acl
+	rp.globalACLMu.Unlock()
+}
+
+// GetGlobalACL returns the current server-level access control rules.
+func (rp *HTTPReverseProxy) GetGlobalACL() *GlobalACL {
+	rp.globalACLMu.RLock()
+	defer rp.globalACLMu.RUnlock()
+	return rp.globalACL
+}
+
+// SetTrustedProxies sets the list of trusted proxy IP addresses/CIDR ranges.
+// Requests from these IPs will have their X-Forwarded-For header parsed to extract real client IP.
+func (rp *HTTPReverseProxy) SetTrustedProxies(proxies []string) {
+	rp.trustedProxiesMu.Lock()
+	rp.trustedProxies = proxies
+	rp.trustedProxiesMu.Unlock()
+}
+
+// GetTrustedProxies returns the current list of trusted proxy IP addresses/CIDR ranges.
+func (rp *HTTPReverseProxy) GetTrustedProxies() []string {
+	rp.trustedProxiesMu.RLock()
+	defer rp.trustedProxiesMu.RUnlock()
+	return rp.trustedProxies
+}
+
 // Register register the route config to reverse proxy
 // reverse proxy will use CreateConnFn from routeCfg to create a connection to the remote service
 func (rp *HTTPReverseProxy) Register(routeCfg RouteConfig) error {
@@ -235,9 +270,11 @@ func (rp *HTTPReverseProxy) CheckAuth(domain, location, routeByHTTPUser, user, p
 // checkHTTPAccess returns true if the request should be allowed through.
 // Logic:
 //  1. If source IP is in DenyIPs → reject
-//  2. If AllowIPs or AllowUserAgents are non-empty, at least one must match (OR) → allow
-//  3. Otherwise → allow
-func checkHTTPAccess(remoteAddr, userAgent string, allowIPs, denyIPs, allowUserAgents []string) bool {
+//  2. If UA matches DenyUserAgents → reject
+//  3. If AllowIPs and AllowUserAgents are both empty → allow
+//  4. If source IP matches AllowIPs OR UA matches AllowUserAgents → allow
+//  5. Otherwise → reject
+func checkHTTPAccess(remoteAddr, userAgent string, allowIPs, denyIPs, allowUserAgents, denyUserAgents []string) bool {
 	host, _, err := parseHost(remoteAddr)
 	if err != nil {
 		// can't parse addr, deny for safety
@@ -251,12 +288,19 @@ func checkHTTPAccess(remoteAddr, userAgent string, allowIPs, denyIPs, allowUserA
 		}
 	}
 
-	// 2. If no allow rules at all, pass through
+	// 2. DenyUserAgents always wins
+	for _, pattern := range denyUserAgents {
+		if matchUserAgent(userAgent, pattern) {
+			return false
+		}
+	}
+
+	// 3. If no allow rules at all, pass through
 	if len(allowIPs) == 0 && len(allowUserAgents) == 0 {
 		return true
 	}
 
-	// 3. OR: IP match OR UA match
+	// 4. OR: IP match OR UA match
 	for _, cidr := range allowIPs {
 		if matchIPStr(host, cidr) {
 			return true
@@ -272,6 +316,11 @@ func checkHTTPAccess(remoteAddr, userAgent string, allowIPs, denyIPs, allowUserA
 
 func parseHost(addr string) (string, string, error) {
 	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		// If addr doesn't have a port (e.g., "192.168.1.100"), treat it as a pure IP
+		// net.SplitHostPort returns error for addresses without port
+		return addr, "", nil
+	}
 	return host, port, err
 }
 
@@ -309,6 +358,67 @@ func matchUserAgent(ua, pattern string) bool {
 		remaining = remaining[idx+len(p):]
 	}
 	return true
+}
+
+// getRealClientIP extracts the real client IP from X-Forwarded-For header
+// if the request comes from a trusted proxy. Otherwise returns req.RemoteAddr.
+//
+// X-Forwarded-For format: "client1, proxy1, proxy2"
+// The first IP is the original client, subsequent IPs are proxies.
+// Only extract if direct connection source is in trustedProxies.
+//
+// The returned value preserves the original port from req.RemoteAddr so that
+// downstream code (e.g. net.ResolveTCPAddr for proxy protocol) continues to work.
+// Format: "realIP:originalPort"  or just "realIP" when the original port is unavailable.
+func getRealClientIP(req *http.Request, trustedProxies []string) string {
+	remoteHost, remotePort, err := net.SplitHostPort(req.RemoteAddr)
+	if err != nil {
+		return req.RemoteAddr
+	}
+
+	// Check if source IP is in trusted proxies
+	trusted := false
+	for _, cidr := range trustedProxies {
+		if matchIPStr(remoteHost, cidr) {
+			trusted = true
+			break
+		}
+	}
+
+	if !trusted {
+		return req.RemoteAddr
+	}
+
+	// helper: rebuild addr keeping the original port
+	withPort := func(ip string) string {
+		if remotePort == "" {
+			return ip
+		}
+		return net.JoinHostPort(ip, remotePort)
+	}
+
+	// Extract first IP from X-Forwarded-For
+	xff := req.Header.Get("X-Forwarded-For")
+	if xff == "" {
+		// Try X-Real-IP as fallback
+		xri := strings.TrimSpace(req.Header.Get("X-Real-IP"))
+		if xri != "" {
+			return withPort(xri)
+		}
+		return req.RemoteAddr
+	}
+
+	// X-Forwarded-For: client, proxy1, proxy2
+	// Get the first (leftmost) IP which is the original client
+	ips := strings.Split(xff, ",")
+	if len(ips) > 0 {
+		clientIP := strings.TrimSpace(ips[0])
+		if clientIP != "" {
+			return withPort(clientIP)
+		}
+	}
+
+	return req.RemoteAddr
 }
 
 // getVhost tries to get vhost router by route policy.
@@ -369,9 +479,10 @@ func (rp *HTTPReverseProxy) connectHandler(rw http.ResponseWriter, req *http.Req
 	}
 
 	rc, _ := req.Context().Value(RouteConfigKey).(*RouteConfig)
+	reqRouteInfo := req.Context().Value(RouteInfoKey).(*RequestRouteInfo)
 	connectedAt := time.Now()
 
-	remote, err := rp.CreateConnection(req.Context().Value(RouteInfoKey).(*RequestRouteInfo), false)
+	remote, err := rp.CreateConnection(reqRouteInfo, false)
 	if err != nil {
 		_ = NotFoundResponse().Write(client)
 		client.Close()
@@ -382,7 +493,7 @@ func (rp *HTTPReverseProxy) connectHandler(rw http.ResponseWriter, req *http.Req
 
 	if rc != nil && rc.AccessLogFn != nil {
 		rc.AccessLogFn(AccessLogEntry{
-			RemoteAddr:  req.RemoteAddr,
+			RemoteAddr:  reqRouteInfo.RemoteAddr,
 			UserAgent:   req.Header.Get("User-Agent"),
 			Host:        req.Host,
 			URL:         req.URL.Path,
@@ -395,7 +506,7 @@ func (rp *HTTPReverseProxy) connectHandler(rw http.ResponseWriter, req *http.Req
 	}
 }
 
-func (rp *HTTPReverseProxy) injectRequestInfoToCtx(req *http.Request) *http.Request {
+func (rp *HTTPReverseProxy) injectRequestInfoToCtx(req *http.Request, realIP string) *http.Request {
 	user := ""
 	// If url host isn't empty, it's a proxy request. Get http user from Proxy-Authorization header.
 	if req.URL.Host != "" {
@@ -412,7 +523,7 @@ func (rp *HTTPReverseProxy) injectRequestInfoToCtx(req *http.Request) *http.Requ
 		URL:        req.URL.Path,
 		Host:       req.Host,
 		HTTPUser:   user,
-		RemoteAddr: req.RemoteAddr,
+		RemoteAddr: realIP,
 		URLHost:    req.URL.Host,
 	}
 
@@ -426,6 +537,10 @@ func (rp *HTTPReverseProxy) injectRequestInfoToCtx(req *http.Request) *http.Requ
 }
 
 func (rp *HTTPReverseProxy) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
+	// Extract real client IP first (before any checks that use RemoteAddr)
+	trustedProxies := rp.GetTrustedProxies()
+	realIP := getRealClientIP(req, trustedProxies)
+
 	domain, _ := httppkg.CanonicalHost(req.Host)
 	location := req.URL.Path
 	user, passwd, _ := req.BasicAuth()
@@ -435,17 +550,33 @@ func (rp *HTTPReverseProxy) ServeHTTP(rw http.ResponseWriter, req *http.Request)
 		return
 	}
 
-	newreq := rp.injectRequestInfoToCtx(req)
-	// IP + UA access control (OR logic: pass if IP matches AllowIPs OR UA matches AllowUserAgents).
-	// DenyIPs is always checked first and always rejects.
+	// Layer 1: global ACL (server-level, evaluated before per-proxy rules).
+	globalACL := rp.GetGlobalACL()
+	if globalACL != nil {
+		ua := req.Header.Get("User-Agent")
+		if !checkHTTPAccess(realIP, ua,
+			globalACL.AllowIPs,
+			globalACL.DenyIPs,
+			globalACL.AllowUserAgents,
+			globalACL.DenyUserAgents,
+		) {
+			log.Debugf("http request from [%s] rejected by global access control, UA: %q", realIP, ua)
+			http.Error(rw, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+			return
+		}
+	}
+
+	newreq := rp.injectRequestInfoToCtx(req, realIP)
+	// Layer 2: per-proxy IP + UA access control (OR logic: pass if IP matches AllowIPs OR UA matches AllowUserAgents).
+	// DenyIPs and DenyUserAgents are always checked first and always reject.
 	rc, _ := newreq.Context().Value(RouteConfigKey).(*RouteConfig)
 	if rc != nil && (len(rc.AllowIPs) > 0 || len(rc.DenyIPs) > 0 || len(rc.AllowUserAgents) > 0) {
 		ua := req.Header.Get("User-Agent")
-		if !checkHTTPAccess(req.RemoteAddr, ua, rc.AllowIPs, rc.DenyIPs, rc.AllowUserAgents) {
-			log.Debugf("http request from [%s] rejected by access control, UA: %q", req.RemoteAddr, ua)
+		if !checkHTTPAccess(realIP, ua, rc.AllowIPs, rc.DenyIPs, rc.AllowUserAgents, nil) {
+			log.Debugf("http request from [%s] rejected by access control, UA: %q", realIP, ua)
 			if rc.AccessLogFn != nil {
 				rc.AccessLogFn(AccessLogEntry{
-					RemoteAddr:  req.RemoteAddr,
+					RemoteAddr:  realIP,
 					UserAgent:   ua,
 					Host:        req.Host,
 					URL:         req.URL.Path,
@@ -481,7 +612,7 @@ func (rp *HTTPReverseProxy) ServeHTTP(rw http.ResponseWriter, req *http.Request)
 			bytesIn = bodyReader.n
 		}
 		rc.AccessLogFn(AccessLogEntry{
-			RemoteAddr:  req.RemoteAddr,
+			RemoteAddr:  realIP,
 			UserAgent:   req.Header.Get("User-Agent"),
 			Host:        req.Host,
 			URL:         req.URL.Path,

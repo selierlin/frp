@@ -579,7 +579,7 @@ func TestFormatDetection(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.path, func(t *testing.T) {
-			require.Equal(t, tt.format, detectFormatFromPath(tt.path))
+			require.Equal(t, tt.format, DetectFormatFromPath(tt.path))
 		})
 	}
 }

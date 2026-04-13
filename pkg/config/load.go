@@ -110,11 +110,11 @@ func LoadConfigureFromFile(path string, c any, strict bool) error {
 	if err != nil {
 		return err
 	}
-	return LoadConfigure(content, c, strict, detectFormatFromPath(path))
+	return LoadConfigure(content, c, strict, DetectFormatFromPath(path))
 }
 
-// detectFormatFromPath returns a format hint based on the file extension.
-func detectFormatFromPath(path string) string {
+// DetectFormatFromPath returns a format hint based on the file extension.
+func DetectFormatFromPath(path string) string {
 	switch strings.ToLower(filepath.Ext(path)) {
 	case ".toml":
 		return "toml"

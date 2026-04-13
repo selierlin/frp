@@ -98,6 +98,30 @@ type ServerConfig struct {
 	HTTPPlugins []HTTPPluginOptions `json:"httpPlugins,omitempty"`
 
 	AccessLog AccessLogConfig `json:"accessLog,omitempty"`
+
+	// GlobalAllowIPs specifies IP addresses or CIDR ranges allowed to access all proxies globally.
+	// If non-empty, a request must match this list OR GlobalAllowUserAgents to be allowed (OR logic).
+	// GlobalDenyIPs is evaluated first and always rejects.
+	// Only effective for HTTP/HTTPS proxies.
+	GlobalAllowIPs []string `json:"globalAllowIPs,omitempty"`
+	// GlobalDenyIPs specifies IP addresses or CIDR ranges denied from accessing all proxies globally.
+	// Matched IPs are rejected regardless of allow rules.
+	// Only effective for HTTP/HTTPS proxies.
+	GlobalDenyIPs []string `json:"globalDenyIPs,omitempty"`
+	// GlobalAllowUserAgents specifies User-Agent glob patterns allowed to access all proxies globally.
+	// A request is allowed if its source IP matches GlobalAllowIPs OR its UA matches any pattern here (OR logic).
+	// Only effective for HTTP/HTTPS proxies.
+	GlobalAllowUserAgents []string `json:"globalAllowUserAgents,omitempty"`
+	// GlobalDenyUserAgents specifies User-Agent glob patterns denied from accessing all proxies globally.
+	// Matched requests are rejected regardless of allow rules.
+	// Only effective for HTTP/HTTPS proxies.
+	GlobalDenyUserAgents []string `json:"globalDenyUserAgents,omitempty"`
+	// TrustedProxies specifies IP addresses or CIDR ranges that are trusted to
+	// provide valid X-Forwarded-For headers. When a request comes from a trusted proxy,
+	// the real client IP is extracted from X-Forwarded-For header (first IP in the chain).
+	// If empty, req.RemoteAddr is used directly (no proxy IP extraction).
+	// Only effective for HTTP/HTTPS proxies.
+	TrustedProxies []string `json:"trustedProxies,omitempty"`
 }
 
 func (c *ServerConfig) Complete() error {

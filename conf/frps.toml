@@ -13,6 +13,12 @@ webServer.password = "admin"
 auth.method = "token"
 auth.token = "12345678"
 
+# 可信代理 IP 列表（支持 CIDR）
+# frps 前面有 Nginx 等反向代理时，设置此项可让 frps 从 X-Forwarded-For 头中
+# 提取真实客户端 IP，用于访问日志和 IP 访问控制。
+# 仅信任来自这些 IP 的 X-Forwarded-For 头，防止客户端伪造。
+trustedProxies = ["127.0.0.1/8"]
+
 [accessLog]
 storagePath = "./frps_access.db"
 reserveDays = 7

@@ -36,7 +36,14 @@ func (svr *Service) registerRouteHandlers(helper *httppkg.RouterRegisterHelper) 
 		subRouter.Handle("/metrics", promhttp.Handler())
 	}
 
-	apiController := adminapi.NewController(svr.cfg, svr.clientRegistry, svr.pxyManager)
+	apiController := adminapi.NewController(
+		svr.cfg,
+		svr.clientRegistry,
+		svr.pxyManager,
+		svr.rc.HTTPReverseProxy,
+		svr.cfgFilePath,
+		svr.cfgFileFormat,
+	)
 
 	// apis
 	subRouter.HandleFunc("/api/serverinfo", httppkg.MakeHTTPHandlerFunc(apiController.APIServerInfo)).Methods("GET")
@@ -48,6 +55,8 @@ func (svr *Service) registerRouteHandlers(helper *httppkg.RouterRegisterHelper) 
 	subRouter.HandleFunc("/api/clients/{key}", httppkg.MakeHTTPHandlerFunc(apiController.APIClientDetail)).Methods("GET")
 	subRouter.HandleFunc("/api/proxies", httppkg.MakeHTTPHandlerFunc(apiController.DeleteProxies)).Methods("DELETE")
 	subRouter.HandleFunc("/api/accesslog", httppkg.MakeHTTPHandlerFunc(apiController.APIAccessLog)).Methods("GET")
+	subRouter.HandleFunc("/api/config/globalACL", httppkg.MakeHTTPHandlerFunc(apiController.APIGetGlobalACL)).Methods("GET")
+	subRouter.HandleFunc("/api/config/globalACL", httppkg.MakeHTTPHandlerFunc(apiController.APIUpdateGlobalACL)).Methods("PUT")
 
 	// view
 	subRouter.Handle("/favicon.ico", http.FileServer(helper.AssetsFS)).Methods("GET")

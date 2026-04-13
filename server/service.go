@@ -33,6 +33,7 @@ import (
 
 	"github.com/fatedier/frp/pkg/accesslog"
 	"github.com/fatedier/frp/pkg/auth"
+	"github.com/fatedier/frp/pkg/config"
 	v1 "github.com/fatedier/frp/pkg/config/v1"
 	modelmetrics "github.com/fatedier/frp/pkg/metrics"
 	"github.com/fatedier/frp/pkg/msg"
@@ -123,7 +124,9 @@ type Service struct {
 
 	tlsConfig *tls.Config
 
-	cfg *v1.ServerConfig
+	cfg           *v1.ServerConfig
+	cfgFilePath   string // path to the config file (empty if started from CLI args)
+	cfgFileFormat string // format of the config file (toml/yaml/json)
 
 	// accessLogManager handles third-party access log persistence (optional).
 	accessLogManager *accesslog.Manager
@@ -134,7 +137,7 @@ type Service struct {
 	cancel context.CancelFunc
 }
 
-func NewService(cfg *v1.ServerConfig) (*Service, error) {
+func NewService(cfg *v1.ServerConfig, cfgFilePath string) (*Service, error) {
 	tlsConfig, err := transport.NewServerTLSConfig(
 		cfg.Transport.TLS.CertFile,
 		cfg.Transport.TLS.KeyFile,
@@ -178,6 +181,8 @@ func NewService(cfg *v1.ServerConfig) (*Service, error) {
 		webServer:         webServer,
 		tlsConfig:         tlsConfig,
 		cfg:               cfg,
+		cfgFilePath:       cfgFilePath,
+		cfgFileFormat:     config.DetectFormatFromPath(cfgFilePath),
 		ctx:               context.Background(),
 	}
 	if webServer != nil {
@@ -295,6 +300,20 @@ func NewService(cfg *v1.ServerConfig) (*Service, error) {
 		rp := vhost.NewHTTPReverseProxy(vhost.HTTPReverseProxyOptions{
 			ResponseHeaderTimeoutS: cfg.VhostHTTPTimeout,
 		}, svr.httpVhostRouter)
+		// Inject server-level global ACL if any rule is configured.
+		if len(cfg.GlobalAllowIPs) > 0 || len(cfg.GlobalDenyIPs) > 0 ||
+			len(cfg.GlobalAllowUserAgents) > 0 || len(cfg.GlobalDenyUserAgents) > 0 {
+			rp.SetGlobalACL(&vhost.GlobalACL{
+				AllowIPs:        cfg.GlobalAllowIPs,
+				DenyIPs:         cfg.GlobalDenyIPs,
+				AllowUserAgents: cfg.GlobalAllowUserAgents,
+				DenyUserAgents:  cfg.GlobalDenyUserAgents,
+			})
+		}
+		// Set trusted proxies for real IP extraction from X-Forwarded-For header.
+		if len(cfg.TrustedProxies) > 0 {
+			rp.SetTrustedProxies(cfg.TrustedProxies)
+		}
 		svr.rc.HTTPReverseProxy = rp
 
 		address := net.JoinHostPort(cfg.ProxyBindAddr, strconv.Itoa(cfg.VhostHTTPPort))
