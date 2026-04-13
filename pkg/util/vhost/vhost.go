@@ -125,20 +125,6 @@ type AccessLogEntry struct {
 	Blocked     bool
 }
 
-// GlobalACL holds server-level access control rules applied before per-proxy rules.
-// Logic (evaluated in order):
-//  1. If source IP matches GlobalDenyIPs → reject
-//  2. If UA matches GlobalDenyUserAgents → reject
-//  3. If both GlobalAllowIPs and GlobalAllowUserAgents are empty → allow
-//  4. If source IP matches GlobalAllowIPs OR UA matches GlobalAllowUserAgents → allow
-//  5. Otherwise → reject
-type GlobalACL struct {
-	AllowIPs        []string
-	DenyIPs         []string
-	AllowUserAgents []string
-	DenyUserAgents  []string
-}
-
 // RouteConfig is the params used to match HTTP requests
 type RouteConfig struct {
 	Domain          string

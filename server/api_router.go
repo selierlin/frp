@@ -40,7 +40,6 @@ func (svr *Service) registerRouteHandlers(helper *httppkg.RouterRegisterHelper) 
 		svr.cfg,
 		svr.clientRegistry,
 		svr.pxyManager,
-		svr.rc.HTTPReverseProxy,
 		svr.cfgFilePath,
 		svr.cfgFileFormat,
 	)

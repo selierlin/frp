@@ -17,9 +17,11 @@ package http
 import (
 	"cmp"
 	"fmt"
+	"net"
 	"net/http"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/fatedier/frp/pkg/config"
@@ -30,7 +32,6 @@ import (
 	"github.com/fatedier/frp/pkg/util/jsonx"
 	"github.com/fatedier/frp/pkg/util/log"
 	"github.com/fatedier/frp/pkg/util/version"
-	"github.com/fatedier/frp/pkg/util/vhost"
 	"github.com/fatedier/frp/server/http/model"
 	"github.com/fatedier/frp/server/proxy"
 	"github.com/fatedier/frp/server/registry"
@@ -38,12 +39,12 @@ import (
 
 type Controller struct {
 	// dependencies
-	serverCfg        *v1.ServerConfig
-	clientRegistry   *registry.ClientRegistry
-	pxyManager       ProxyManager
-	httpReverseProxy *vhost.HTTPReverseProxy
-	cfgFilePath      string
-	cfgFileFormat    string
+	serverCfg      *v1.ServerConfig
+	serverCfgMu    sync.RWMutex // protects serverCfg field writes in API handlers
+	clientRegistry *registry.ClientRegistry
+	pxyManager     ProxyManager
+	cfgFilePath    string
+	cfgFileFormat  string
 }
 
 type ProxyManager interface {
@@ -54,17 +55,15 @@ func NewController(
 	serverCfg *v1.ServerConfig,
 	clientRegistry *registry.ClientRegistry,
 	pxyManager ProxyManager,
-	httpReverseProxy *vhost.HTTPReverseProxy,
 	cfgFilePath string,
 	cfgFileFormat string,
 ) *Controller {
 	return &Controller{
-		serverCfg:        serverCfg,
-		clientRegistry:   clientRegistry,
-		pxyManager:       pxyManager,
-		httpReverseProxy: httpReverseProxy,
-		cfgFilePath:      cfgFilePath,
-		cfgFileFormat:    cfgFileFormat,
+		serverCfg:      serverCfg,
+		clientRegistry: clientRegistry,
+		pxyManager:     pxyManager,
+		cfgFilePath:    cfgFilePath,
+		cfgFileFormat:  cfgFileFormat,
 	}
 }
 
@@ -371,29 +370,20 @@ func getConfFromConfigurer(cfg v1.ProxyConfigurer) any {
 }
 
 // APIGetGlobalACL handles GET /api/config/globalACL
-func (c *Controller) APIGetGlobalACL(ctx *httppkg.Context) (any, error) {
-	if c.httpReverseProxy == nil {
-		return nil, httppkg.NewError(http.StatusNotFound, "HTTP reverse proxy not enabled")
+func (c *Controller) APIGetGlobalACL(_ *httppkg.Context) (any, error) {
+	c.serverCfgMu.RLock()
+	resp := model.GlobalACLResp{
+		AllowIPs:        c.serverCfg.GlobalAllowIPs,
+		DenyIPs:         c.serverCfg.GlobalDenyIPs,
+		AllowUserAgents: c.serverCfg.GlobalAllowUserAgents,
+		DenyUserAgents:  c.serverCfg.GlobalDenyUserAgents,
 	}
-
-	acl := c.httpReverseProxy.GetGlobalACL()
-	if acl == nil {
-		return model.GlobalACLResp{}, nil
-	}
-	return model.GlobalACLResp{
-		AllowIPs:        acl.AllowIPs,
-		DenyIPs:         acl.DenyIPs,
-		AllowUserAgents: acl.AllowUserAgents,
-		DenyUserAgents:  acl.DenyUserAgents,
-	}, nil
+	c.serverCfgMu.RUnlock()
+	return resp, nil
 }
 
 // APIUpdateGlobalACL handles PUT /api/config/globalACL
 func (c *Controller) APIUpdateGlobalACL(ctx *httppkg.Context) (any, error) {
-	if c.httpReverseProxy == nil {
-		return nil, httppkg.NewError(http.StatusNotFound, "HTTP reverse proxy not enabled")
-	}
-
 	body, err := ctx.Body()
 	if err != nil {
 		return nil, httppkg.NewError(http.StatusBadRequest, fmt.Sprintf("read request body error: %v", err))
@@ -404,22 +394,28 @@ func (c *Controller) APIUpdateGlobalACL(ctx *httppkg.Context) (any, error) {
 		return nil, httppkg.NewError(http.StatusBadRequest, fmt.Sprintf("parse JSON error: %v", err))
 	}
 
-	// 1. Update runtime configuration
-	newACL := &vhost.GlobalACL{
-		AllowIPs:        req.AllowIPs,
-		DenyIPs:         req.DenyIPs,
-		AllowUserAgents: req.AllowUserAgents,
-		DenyUserAgents:  req.DenyUserAgents,
+	// Validate IP/CIDR format for allow and deny IP lists.
+	for _, ip := range append(req.AllowIPs, req.DenyIPs...) {
+		if net.ParseIP(ip) == nil {
+			if _, _, err := net.ParseCIDR(ip); err != nil {
+				return nil, httppkg.NewError(http.StatusBadRequest,
+					fmt.Sprintf("invalid IP or CIDR: %s", ip))
+			}
+		}
 	}
-	c.httpReverseProxy.SetGlobalACL(newACL)
 
-	// 2. Update ServerConfig memory copy
+	// Update ServerConfig memory copy (protected by serverCfgMu).
+	// All proxies read GlobalAllowIPs/GlobalDenyIPs directly from serverCfg on each
+	// new connection, so this change takes effect immediately without any restart.
+	c.serverCfgMu.Lock()
 	c.serverCfg.GlobalAllowIPs = req.AllowIPs
 	c.serverCfg.GlobalDenyIPs = req.DenyIPs
 	c.serverCfg.GlobalAllowUserAgents = req.AllowUserAgents
 	c.serverCfg.GlobalDenyUserAgents = req.DenyUserAgents
+	c.serverCfgMu.Unlock()
 
-	// 3. Persist to config file (if available)
+	// Persist to config file (if available).
+	persisted := false
 	if c.cfgFilePath != "" {
 		if err := config.SaveServerConfigPartial(c.cfgFilePath, func(cfg *v1.ServerConfig) {
 			cfg.GlobalAllowIPs = req.AllowIPs
@@ -428,7 +424,10 @@ func (c *Controller) APIUpdateGlobalACL(ctx *httppkg.Context) (any, error) {
 			cfg.GlobalDenyUserAgents = req.DenyUserAgents
 		}); err != nil {
 			log.Warnf("save global ACL to config file error: %v", err)
-			// Don't fail the request; runtime config is already effective
+			// Don't fail the request; runtime config is already effective.
+			// persisted remains false so the caller knows it wasn't written to disk.
+		} else {
+			persisted = true
 		}
 	} else {
 		log.Warnf("config file path not set, global ACL changes will not persist after restart")
@@ -439,5 +438,6 @@ func (c *Controller) APIUpdateGlobalACL(ctx *httppkg.Context) (any, error) {
 		DenyIPs:         req.DenyIPs,
 		AllowUserAgents: req.AllowUserAgents,
 		DenyUserAgents:  req.DenyUserAgents,
+		Persisted:       persisted,
 	}, nil
 }

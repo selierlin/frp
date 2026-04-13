@@ -21,6 +21,8 @@ import (
 	"time"
 
 	_ "modernc.org/sqlite"
+
+	"github.com/fatedier/frp/pkg/util/log"
 )
 
 const schema = `
@@ -76,7 +78,14 @@ func newStore(path string) (*store, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("create schema: %w", err)
 	}
-	return &store{db: db}, nil
+	st := &store{db: db}
+	// On startup, mark any records still in "connected" state as "disconnected".
+	// These are stale entries left by a previous unclean shutdown (e.g. SIGKILL).
+	if err := st.closeStaleConnected(); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("close stale connected records: %w", err)
+	}
+	return st, nil
 }
 
 func (s *store) insert(r *Record) (int64, error) {
@@ -105,6 +114,23 @@ func (s *store) updateOnClose(id, duration, trafficIn, trafficOut int64) error {
 		duration, trafficIn, trafficOut, EventDisconnected, id,
 	)
 	return err
+}
+
+// closeStaleConnected marks all records with event="connected" as "disconnected".
+// These records are leftovers from a previous unclean shutdown (e.g. SIGKILL / OOM).
+// Called once at startup before any new records are written.
+func (s *store) closeStaleConnected() error {
+	result, err := s.db.Exec(
+		`UPDATE access_logs SET event=? WHERE event=?`,
+		EventDisconnected, EventConnected,
+	)
+	if err != nil {
+		return err
+	}
+	if n, _ := result.RowsAffected(); n > 0 {
+		log.Infof("accesslog: closed %d stale 'connected' records left by previous unclean shutdown", n)
+	}
+	return nil
 }
 
 func (s *store) batchInsert(records []*Record) error {

@@ -80,8 +80,6 @@ type HTTPReverseProxy struct {
 	vhostRouter *Routers
 
 	responseHeaderTimeout time.Duration
-	globalACL             *GlobalACL
-	globalACLMu           sync.RWMutex // protects globalACL
 	trustedProxies        []string
 	trustedProxiesMu      sync.RWMutex // protects trustedProxies
 }
@@ -179,21 +177,6 @@ func NewHTTPReverseProxy(option HTTPReverseProxyOptions, vhostRouter *Routers) *
 	}
 	rp.proxy = h2c.NewHandler(proxy, &http2.Server{})
 	return rp
-}
-
-// SetGlobalACL sets the server-level access control rules.
-// Safe to call at any time; updates are immediately effective.
-func (rp *HTTPReverseProxy) SetGlobalACL(acl *GlobalACL) {
-	rp.globalACLMu.Lock()
-	rp.globalACL = acl
-	rp.globalACLMu.Unlock()
-}
-
-// GetGlobalACL returns the current server-level access control rules.
-func (rp *HTTPReverseProxy) GetGlobalACL() *GlobalACL {
-	rp.globalACLMu.RLock()
-	defer rp.globalACLMu.RUnlock()
-	return rp.globalACL
 }
 
 // SetTrustedProxies sets the list of trusted proxy IP addresses/CIDR ranges.
@@ -550,25 +533,11 @@ func (rp *HTTPReverseProxy) ServeHTTP(rw http.ResponseWriter, req *http.Request)
 		return
 	}
 
-	// Layer 1: global ACL (server-level, evaluated before per-proxy rules).
-	globalACL := rp.GetGlobalACL()
-	if globalACL != nil {
-		ua := req.Header.Get("User-Agent")
-		if !checkHTTPAccess(realIP, ua,
-			globalACL.AllowIPs,
-			globalACL.DenyIPs,
-			globalACL.AllowUserAgents,
-			globalACL.DenyUserAgents,
-		) {
-			log.Debugf("http request from [%s] rejected by global access control, UA: %q", realIP, ua)
-			http.Error(rw, http.StatusText(http.StatusForbidden), http.StatusForbidden)
-			return
-		}
-	}
-
 	newreq := rp.injectRequestInfoToCtx(req, realIP)
-	// Layer 2: per-proxy IP + UA access control (OR logic: pass if IP matches AllowIPs OR UA matches AllowUserAgents).
+	// Per-proxy IP + UA access control (OR logic: pass if IP matches AllowIPs OR UA matches AllowUserAgents).
 	// DenyIPs and DenyUserAgents are always checked first and always reject.
+	// Note: global IP rules (GlobalAllowIPs/GlobalDenyIPs) are enforced at the BaseProxy layer
+	// (server/proxy/proxy.go checkIPAccess) for all proxy types including HTTP.
 	rc, _ := newreq.Context().Value(RouteConfigKey).(*RouteConfig)
 	if rc != nil && (len(rc.AllowIPs) > 0 || len(rc.DenyIPs) > 0 || len(rc.AllowUserAgents) > 0) {
 		ua := req.Header.Get("User-Agent")

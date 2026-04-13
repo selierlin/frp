@@ -32,6 +32,7 @@ declare module 'vue' {
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
     StatCard: typeof import('./src/components/StatCard.vue')['default']
+    TagListEditor: typeof import('./src/components/TagListEditor.vue')['default']
     Traffic: typeof import('./src/components/Traffic.vue')['default']
   }
   export interface ComponentCustomProperties {

@@ -144,6 +144,9 @@ type GlobalACLResp struct {
 	DenyIPs         []string `json:"denyIPs"`
 	AllowUserAgents []string `json:"allowUserAgents"`
 	DenyUserAgents  []string `json:"denyUserAgents"`
+	// Persisted indicates whether the ACL config was successfully written to the config file.
+	// false means the change is effective in memory only and will be lost after restart.
+	Persisted bool `json:"persisted"`
 }
 
 // GlobalACLUpdateReq represents the request body for PUT /api/config/globalACL

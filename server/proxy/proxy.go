@@ -340,12 +340,12 @@ func (pxy *BaseProxy) handleUserTCPConnection(userConn net.Conn) {
 }
 
 // checkIPAccess checks whether the remote address is allowed to access this proxy.
-// DenyIPs is evaluated first, then AllowIPs.
+// Evaluation order (global rules take highest priority):
+//  1. Global DenyIPs  → always reject (cannot be overridden by any allow rule)
+//  2. Global AllowIPs → whitelist (empty = no global restriction)
+//  3. Per-proxy DenyIPs  → reject
+//  4. Per-proxy AllowIPs → whitelist (empty = no per-proxy restriction)
 func (pxy *BaseProxy) checkIPAccess(addr net.Addr) error {
-	cfg := pxy.configurer.GetBaseConfig()
-	if len(cfg.AllowIPs) == 0 && len(cfg.DenyIPs) == 0 {
-		return nil
-	}
 	host, _, err := net.SplitHostPort(addr.String())
 	if err != nil {
 		return fmt.Errorf("invalid remote addr: %w", err)
@@ -354,13 +354,44 @@ func (pxy *BaseProxy) checkIPAccess(addr net.Addr) error {
 	if ip == nil {
 		return fmt.Errorf("cannot parse IP: %s", host)
 	}
-	// DenyIPs is checked first
+
+	// Layer 1: global rules (read directly from serverCfg for hot-reload support)
+	globalDenyIPs := pxy.serverCfg.GlobalDenyIPs
+	globalAllowIPs := pxy.serverCfg.GlobalAllowIPs
+	if len(globalDenyIPs) > 0 || len(globalAllowIPs) > 0 {
+		// 1a. Global DenyIPs — highest priority, always reject
+		for _, cidr := range globalDenyIPs {
+			if netpkg.MatchIP(ip, cidr) {
+				return fmt.Errorf("ip %s is in global denyIPs", host)
+			}
+		}
+		// 1b. Global AllowIPs whitelist (empty = no global restriction)
+		if len(globalAllowIPs) > 0 {
+			allowed := false
+			for _, cidr := range globalAllowIPs {
+				if netpkg.MatchIP(ip, cidr) {
+					allowed = true
+					break
+				}
+			}
+			if !allowed {
+				return fmt.Errorf("ip %s is not in global allowIPs", host)
+			}
+		}
+	}
+
+	// Layer 2: per-proxy rules
+	cfg := pxy.configurer.GetBaseConfig()
+	if len(cfg.DenyIPs) == 0 && len(cfg.AllowIPs) == 0 {
+		return nil
+	}
+	// 2a. Per-proxy DenyIPs
 	for _, cidr := range cfg.DenyIPs {
 		if netpkg.MatchIP(ip, cidr) {
 			return fmt.Errorf("ip %s is in denyIPs", host)
 		}
 	}
-	// AllowIPs whitelist (empty means no restriction)
+	// 2b. Per-proxy AllowIPs whitelist
 	if len(cfg.AllowIPs) > 0 {
 		for _, cidr := range cfg.AllowIPs {
 			if netpkg.MatchIP(ip, cidr) {

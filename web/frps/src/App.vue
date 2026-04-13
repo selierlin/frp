@@ -80,6 +80,14 @@
           >
             Proxies
           </router-link>
+          <router-link
+            to="/acl"
+            class="sidebar-link"
+            :class="{ active: route.path === '/acl' }"
+            @click="closeSidebar"
+          >
+            Access Control
+          </router-link>
         </nav>
       </aside>
 

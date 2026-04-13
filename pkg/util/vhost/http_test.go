@@ -144,72 +144,6 @@ func TestGlobalACLLogic(t *testing.T) {
 	}
 }
 
-// TestGlobalACLIntegration tests Global ACL in the full HTTPReverseProxy flow.
-// When ACL blocks, returns 403; when ACL passes but backend fails, returns 404.
-func TestGlobalACLIntegration(t *testing.T) {
-	tests := []struct {
-		name           string
-		globalACL      GlobalACL
-		remoteAddr     string
-		userAgent      string
-		expectStatus   int // 403 = blocked by global ACL, 404 = ACL passed but backend unavailable
-	}{
-		{name: "deny_by_ip_blocked", globalACL: GlobalACL{DenyIPs: []string{"192.168.1.100"}},
-			remoteAddr: "192.168.1.100:12345", userAgent: "curl", expectStatus: http.StatusForbidden},
-		{name: "deny_by_ip_passed", globalACL: GlobalACL{DenyIPs: []string{"192.168.1.100"}},
-			remoteAddr: "192.168.1.101:12345", userAgent: "curl", expectStatus: http.StatusNotFound}, // ACL passed, backend unavailable
-		{name: "deny_by_ua_blocked", globalACL: GlobalACL{DenyUserAgents: []string{"curl*"}},
-			remoteAddr: "1.2.3.4:12345", userAgent: "curl/7.68.0", expectStatus: http.StatusForbidden},
-		{name: "deny_by_ua_passed", globalACL: GlobalACL{DenyUserAgents: []string{"curl*"}},
-			remoteAddr: "1.2.3.4:12345", userAgent: "Mozilla/5.0", expectStatus: http.StatusNotFound}, // ACL passed
-		{name: "allow_by_ip_in_list", globalACL: GlobalACL{AllowIPs: []string{"192.168.1.100"}},
-			remoteAddr: "192.168.1.100:12345", userAgent: "curl", expectStatus: http.StatusNotFound}, // ACL passed
-		{name: "allow_by_ip_not_in_list", globalACL: GlobalACL{AllowIPs: []string{"192.168.1.100"}},
-			remoteAddr: "192.168.1.101:12345", userAgent: "curl", expectStatus: http.StatusForbidden},
-		{name: "no_acl_rules", globalACL: GlobalACL{},
-			remoteAddr: "1.2.3.4:12345", userAgent: "anything", expectStatus: http.StatusNotFound}, // No ACL, backend unavailable
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Create HTTPReverseProxy with a mock backend
-			routers := NewRouters()
-			rp := NewHTTPReverseProxy(HTTPReverseProxyOptions{}, routers)
-
-			// Set Global ACL
-			rp.SetGlobalACL(&tt.globalACL)
-
-			// Register a route that will be matched
-			// We need a dummy CreateConnFn to avoid nil pointer issues
-			err := routers.Add("example.com", "/test", "", &RouteConfig{
-				Domain:   "example.com",
-				Location: "/test",
-				CreateConnFn: func(remoteAddr string) (net.Conn, error) {
-					// Return a mock connection that immediately fails
-					// This test only cares about ACL blocking, not actual proxying
-					return nil, http.ErrNotSupported
-				},
-			})
-			if err != nil {
-				t.Fatalf("failed to add route: %v", err)
-			}
-
-			// Create test request
-			req := httptest.NewRequest("GET", "http://example.com/test", nil)
-			req.Header.Set("User-Agent", tt.userAgent)
-			req.RemoteAddr = tt.remoteAddr
-
-			// Execute request
-			rec := httptest.NewRecorder()
-			rp.ServeHTTP(rec, req)
-
-			// Verify result
-			if rec.Code != tt.expectStatus {
-				t.Errorf("expected status %d, got %d (body: %s)", tt.expectStatus, rec.Code, rec.Body.String())
-			}
-		})
-	}
-}
 // TestGetRealClientIP tests the real client IP extraction from X-Forwarded-For header.
 func TestGetRealClientIP(t *testing.T) {
 	tests := []struct {
@@ -292,38 +226,42 @@ func TestGetRealClientIP(t *testing.T) {
 }
 
 // TestTrustedProxiesIntegration tests TrustedProxies in the full HTTPReverseProxy flow.
-// Verifies that real IP is extracted and used for ACL checks when trusted proxies are configured.
+// Verifies that real IP is extracted from X-Forwarded-For and used for per-proxy ACL checks.
+// Note: global IP rules (GlobalAllowIPs/GlobalDenyIPs) are now enforced at the BaseProxy layer
+// (server/proxy/proxy.go) and are not tested here.
 func TestTrustedProxiesIntegration(t *testing.T) {
 	tests := []struct {
 		name           string
 		trustedProxies []string
-		globalACL      GlobalACL
-		remoteAddr     string // TCP connection source (proxy IP)
-		xForwardedFor  string // Real client IP chain
-		expectStatus   int    // 403 = blocked by ACL using real IP, 404 = ACL passed but backend unavailable
+		perProxyDenyIPs []string // per-proxy deny list to verify real IP extraction
+		remoteAddr     string   // TCP connection source (proxy IP)
+		xForwardedFor  string   // Real client IP chain
+		expectStatus   int      // 403 = blocked by per-proxy ACL using real IP, 404 = passed but backend unavailable
 	}{
-		// Trusted proxy enabled, real IP used for ACL
+		// Trusted proxy enabled: real IP extracted from XFF and used for per-proxy ACL
 		{name: "trusted_proxy_block_real_ip", trustedProxies: []string{"127.0.0.1/8"},
-			globalACL: GlobalACL{DenyIPs: []string{"192.168.1.100"}},
+			perProxyDenyIPs: []string{"192.168.1.100"},
 			remoteAddr: "127.0.0.1:12345", xForwardedFor: "192.168.1.100", expectStatus: http.StatusForbidden},
 		{name: "trusted_proxy_allow_real_ip", trustedProxies: []string{"127.0.0.1/8"},
-			globalACL: GlobalACL{AllowIPs: []string{"192.168.1.100"}},
-			remoteAddr: "127.0.0.1:12345", xForwardedFor: "192.168.1.100", expectStatus: http.StatusNotFound}, // ACL passed
-		{name: "trusted_proxy_block_proxy_ip_not_used", trustedProxies: []string{"127.0.0.1/8"},
-			globalACL: GlobalACL{DenyIPs: []string{"127.0.0.1"}},
-			remoteAddr: "127.0.0.1:12345", xForwardedFor: "192.168.1.100", expectStatus: http.StatusNotFound}, // Proxy IP not used, real IP allowed
+			perProxyDenyIPs: []string{"192.168.1.200"}, // deny a different IP
+			remoteAddr: "127.0.0.1:12345", xForwardedFor: "192.168.1.100", expectStatus: http.StatusNotFound}, // real IP not in deny list
 
-		// No trusted proxy - proxy IP used for ACL (original behavior)
+		// Trusted proxy: proxy IP (127.0.0.1) is NOT used when XFF provides real IP
+		{name: "trusted_proxy_proxy_ip_not_used", trustedProxies: []string{"127.0.0.1/8"},
+			perProxyDenyIPs: []string{"127.0.0.1"}, // deny proxy IP
+			remoteAddr: "127.0.0.1:12345", xForwardedFor: "192.168.1.100", expectStatus: http.StatusNotFound}, // real IP is 192.168.1.100, not denied
+
+		// No trusted proxy: raw connection IP used directly
 		{name: "no_trusted_proxy_block_proxy_ip", trustedProxies: []string{},
-			globalACL: GlobalACL{DenyIPs: []string{"127.0.0.1"}},
+			perProxyDenyIPs: []string{"127.0.0.1"},
 			remoteAddr: "127.0.0.1:12345", xForwardedFor: "192.168.1.100", expectStatus: http.StatusForbidden},
 		{name: "no_trusted_proxy_ignore_xff", trustedProxies: []string{},
-			globalACL: GlobalACL{DenyIPs: []string{"192.168.1.100"}},
-			remoteAddr: "127.0.0.1:12345", xForwardedFor: "192.168.1.100", expectStatus: http.StatusNotFound}, // XFF ignored, proxy IP allowed
+			perProxyDenyIPs: []string{"192.168.1.100"}, // deny XFF IP, but XFF is ignored
+			remoteAddr: "127.0.0.1:12345", xForwardedFor: "192.168.1.100", expectStatus: http.StatusNotFound}, // proxy IP not denied
 
-		// Source not trusted - proxy IP used
+		// Source not trusted: proxy IP used, XFF ignored
 		{name: "untrusted_source_block_proxy_ip", trustedProxies: []string{"10.0.0.0/8"},
-			globalACL: GlobalACL{DenyIPs: []string{"127.0.0.1"}},
+			perProxyDenyIPs: []string{"127.0.0.1"},
 			remoteAddr: "127.0.0.1:12345", xForwardedFor: "192.168.1.100", expectStatus: http.StatusForbidden},
 	}
 
@@ -337,13 +275,11 @@ func TestTrustedProxiesIntegration(t *testing.T) {
 				rp.SetTrustedProxies(tt.trustedProxies)
 			}
 
-			// Set Global ACL
-			rp.SetGlobalACL(&tt.globalACL)
-
-			// Register a route
+			// Register a route with per-proxy DenyIPs to verify real IP extraction
 			err := routers.Add("example.com", "/test", "", &RouteConfig{
 				Domain:   "example.com",
 				Location: "/test",
+				DenyIPs:  tt.perProxyDenyIPs,
 				CreateConnFn: func(remoteAddr string) (net.Conn, error) {
 					return nil, http.ErrNotSupported
 				},

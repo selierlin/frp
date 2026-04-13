@@ -300,17 +300,9 @@ func NewService(cfg *v1.ServerConfig, cfgFilePath string) (*Service, error) {
 		rp := vhost.NewHTTPReverseProxy(vhost.HTTPReverseProxyOptions{
 			ResponseHeaderTimeoutS: cfg.VhostHTTPTimeout,
 		}, svr.httpVhostRouter)
-		// Inject server-level global ACL if any rule is configured.
-		if len(cfg.GlobalAllowIPs) > 0 || len(cfg.GlobalDenyIPs) > 0 ||
-			len(cfg.GlobalAllowUserAgents) > 0 || len(cfg.GlobalDenyUserAgents) > 0 {
-			rp.SetGlobalACL(&vhost.GlobalACL{
-				AllowIPs:        cfg.GlobalAllowIPs,
-				DenyIPs:         cfg.GlobalDenyIPs,
-				AllowUserAgents: cfg.GlobalAllowUserAgents,
-				DenyUserAgents:  cfg.GlobalDenyUserAgents,
-			})
-		}
 		// Set trusted proxies for real IP extraction from X-Forwarded-For header.
+		// Global IP rules (GlobalAllowIPs/GlobalDenyIPs) are enforced at the BaseProxy layer
+		// via checkIPAccess(), covering all proxy types (TCP, UDP, HTTP, etc.).
 		if len(cfg.TrustedProxies) > 0 {
 			rp.SetTrustedProxies(cfg.TrustedProxies)
 		}
